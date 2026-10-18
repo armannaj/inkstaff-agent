@@ -43,12 +43,12 @@ its tables, the first time it is used.
 
 ### Keys
 
-| Variable | Needed for |
-| --- | --- |
-| `OPENROUTER_API_KEY` | Required. Every model call: agents, vision, images, embeddings. |
+| Variable                                                    | Needed for                                                                                                                              |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `OPENROUTER_API_KEY`                                        | Required. Every model call: agents, vision, images, embeddings.                                                                         |
 | `DFS_AUTH`, or `DATAFORSEO_LOGIN` and `DATAFORSEO_PASSWORD` | Required. Google and YouTube results, keyword data, video transcripts. `DFS_AUTH` is the Basic auth value (base64 of `login:password`). |
-| `SCREENSHOTENGINE_API_KEY` | Optional. Screenshots, and reading pages drawn by JavaScript. |
-| `GSC_CREDENTIALS_PATH` | Optional. Your site's Google Search Console data (a service account key file). |
+| `SCREENSHOTENGINE_API_KEY`                                  | Optional. Screenshots, and reading pages drawn by JavaScript. API Key from [ScreenshotEngine.com](https://www.screenshotengine.com)     |
+| `GSC_CREDENTIALS_PATH`                                      | Optional. Your site's Google Search Console data (a service account key file).                                                          |
 
 Everything else (the model each agent uses, reasoning effort, budgets and limits, the search market) has a default and
 can be changed in `.env.local`. `.env.example` lists every variable.
@@ -146,17 +146,17 @@ article object is the same, except that it is a single `data.article` (not an ar
 
 ### Fields
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `id` | string (UUID) | Inkstaff's ID for the article. It stays the same across updates of that article. |
-| `title` | string | The post's H1. The body never contains an H1, so render the title yourself. |
-| `content_markdown` | string | The body as GitHub-flavored Markdown (tables, lists, links), starting at the first `##` section. |
-| `content_html` | string | The same body as HTML. Use whichever of the two your site renders. |
-| `meta_description` | string | For the page's `<meta name="description">`. |
-| `image_url` | string or `null` | The cover image as an absolute URL, or `null` when there is no cover. The cover is not in the body. |
-| `slug` | string | The post's URL path. Inkstaff links to the post as `https://<your site>/blog/<slug>`. The slug never changes once published. |
-| `tags` | string[] | Always empty for now. |
-| `created_at` | ISO 8601 string | Sent with `publish_articles` only. |
+| Field              | Type             | Notes                                                                                                                        |
+| ------------------ | ---------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `id`               | string (UUID)    | Inkstaff's ID for the article. It stays the same across updates of that article.                                             |
+| `title`            | string           | The post's H1. The body never contains an H1, so render the title yourself.                                                  |
+| `content_markdown` | string           | The body as GitHub-flavored Markdown (tables, lists, links), starting at the first `##` section.                             |
+| `content_html`     | string           | The same body as HTML. Use whichever of the two your site renders.                                                           |
+| `meta_description` | string           | For the page's `<meta name="description">`.                                                                                  |
+| `image_url`        | string or `null` | The cover image as an absolute URL, or `null` when there is no cover. The cover is not in the body.                          |
+| `slug`             | string           | The post's URL path. Inkstaff links to the post as `https://<your site>/blog/<slug>`. The slug never changes once published. |
+| `tags`             | string[]         | Always empty for now.                                                                                                        |
+| `created_at`       | ISO 8601 string  | Sent with `publish_articles` only.                                                                                           |
 
 About the body:
 
@@ -186,7 +186,7 @@ About the body:
 Paste this into the AI coding agent (Claude Code, Cursor, …) working in your blog's codebase. It is written to work
 on its own, with no access to this repository.
 
-````text
+```text
 Build an HTTPS webhook endpoint in this codebase that receives blog posts from Inkstaff, an AI writing tool, and
 publishes them on this site's blog. First look at how this project stores and renders content (database, CMS, MDX
 files, …), and follow its existing conventions, framework and data layer. Don't add a new stack.
@@ -242,7 +242,7 @@ Add tests for: a missing or wrong token (401), an invalid body (400), publish cr
 slug twice making one post, update_article with an unknown id updating the post with that slug, and update_article
 for a slug that doesn't exist creating it. Finally, tell me the full endpoint URL to configure and how to set
 BLOG_WEBHOOK_TOKEN.
-````
+```
 
 Then, in Inkstaff, open the product, set **Publish API URL** to that endpoint and **Bearer token** to the same value
 as `BLOG_WEBHOOK_TOKEN`, and set up **Image storage (S3)** for the article images.
