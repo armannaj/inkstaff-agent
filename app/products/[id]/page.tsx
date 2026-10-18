@@ -6,6 +6,7 @@ import { notFound } from "next/navigation";
 import { FormGroup } from "@/components/forms/fields";
 import { DeleteProduct } from "@/components/products/delete-product";
 import { PublishingSettings } from "@/components/products/publishing-settings";
+import { StorageSettings } from "@/components/products/storage-settings";
 import { ProductSettingsForm } from "@/components/products/writing-settings";
 import { getProduct } from "@/lib/products";
 
@@ -41,8 +42,11 @@ async function Product({ params }: Pick<PageProps<"/products/[id]">, "params">) 
         </Link>
       </header>
       <ProductSettingsForm initialProduct={product} />
-      <FormGroup title="Publishing">
+      <FormGroup title="Publishing" description="Where the editor's Publish button sends this product's articles.">
         <PublishingSettings productId={product.id} initial={product.publishing} />
+      </FormGroup>
+      <FormGroup title="Image storage (S3)" description="The bucket this product's article images are uploaded to.">
+        <StorageSettings productId={product.id} initial={product.storage} />
       </FormGroup>
       <FormGroup title="Delete product" description="Deletes the product and its website index. Delete its articles first.">
         <DeleteProduct id={product.id} name={product.name} />

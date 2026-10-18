@@ -1,6 +1,6 @@
 import { blob, index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import type { AgentMessage, AgentState, AgentStatus, ArticleInput } from "@/lib/agent/types";
-import type { PublishingSettings, WebsiteSettings } from "@/lib/schemas";
+import type { PublishingSettings, StorageSettings, WebsiteSettings } from "@/lib/schemas";
 
 const now = () => new Date();
 
@@ -25,8 +25,10 @@ export const products = sqliteTable("products", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   name: text("name").notNull(),
   websiteSettings: text("website_settings", { mode: "json" }).$type<WebsiteSettings>().notNull(),
-  /** Blog publishing endpoint, token and media bucket. The token never leaves the server. Null = not configured. */
+  /** Blog publishing endpoint and token. The token never leaves the server. Null = not configured. */
   publishing: text("publishing", { mode: "json" }).$type<PublishingSettings>(),
+  /** S3-compatible storage for article images. The secret key never leaves the server. Null = not configured. */
+  storage: text("storage", { mode: "json" }).$type<StorageSettings>(),
   indexQueue: text("index_queue", { mode: "json" }).$type<string[]>().notNull().default([]),
   indexStatus: text("index_status").$type<"idle" | "indexing" | "processing" | "complete" | "failed">().notNull().default("idle"),
   indexError: text("index_error"),

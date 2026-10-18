@@ -1,4 +1,5 @@
 import "server-only";
+import { setTimeout as sleep } from "node:timers/promises";
 import { XMLParser } from "fast-xml-parser";
 import { z } from "zod";
 import { and, eq } from "drizzle-orm";
@@ -6,14 +7,15 @@ import { getDb } from "@/db";
 import { productPages, products, type IndexedPage } from "@/db/schema";
 import { EMBEDDING_MODEL, SITE_INDEX_MAX_PAGES, SITE_SUMMARY_MODEL } from "@/lib/config";
 import { getAgentProviders, openRouterPost } from "@/lib/agent/providers";
+import { forgetIndexedPages } from "@/lib/agent/store";
 import { fetchPublicText, readPage } from "@/lib/agent/web/fetch-page";
 import { isExcluded, publicUrl, sameSite } from "@/lib/agent/web/url-safety";
 import type { WebsiteSettings } from "@/lib/schemas";
 
 /**
  * The product's site index: its home page, priority pages and sitemap pages, each read, summarized and embedded, so the
- * agents' site_pages tool can find pages to link. Built one page per request (the page calls `indexStep` in a loop), so
- * it can be paused and resumed; the queue is saved on the product.
+ * agents' site_pages tool can find pages to link. Built one page per step by a background job in this server process
+ * (`startIndexing`), so it can be paused and resumed; the queue is saved on the product.
  */
 
 const parser = new XMLParser({ ignoreAttributes: true, processEntities: false, removeNSPrefix: true });
@@ -228,4 +230,64 @@ export async function indexStep(productId: number, restart = false) {
     .where(and(eq(products.id, productId), eq(products.contentUpdatedAt, leaseTime)));
   if (emptyIndex) throw new Error(error!);
   return { done: !rest.length, remaining: rest.length, warning: error };
+}
+
+/** Background indexing jobs in this process, by product. Kept on globalThis so dev reloads don't lose them. */
+const global = globalThis as typeof globalThis & { inkstaffIndexJobs?: Map<number, { stop: boolean }> };
+const jobs = (global.inkstaffIndexJobs ??= new Map());
+/** Temporary failures (network, model, embedding) are retried before the job gives up. */
+const RETRY_DELAYS_MS = [10_000, 30_000];
+
+/** Whether this process is indexing the product's site right now. */
+export const isIndexing = (productId: number) => jobs.has(productId);
+
+/**
+ * Indexes the product's site in the background, one page per step, until it is done, paused or fails. Not tied to a
+ * request, so the page can be closed. A failure is saved on the product (indexError) for its page to show.
+ * Returns false when the product is already being indexed.
+ */
+export function startIndexing(productId: number, restart = false) {
+  if (jobs.has(productId)) return false;
+  const job = { stop: false };
+  jobs.set(productId, job);
+  void (async () => {
+    let first = restart;
+    let failures = 0;
+    while (!job.stop) {
+      try {
+        const result = await indexStep(productId, first);
+        first = false;
+        failures = 0;
+        if (result.done) return;
+      } catch (error) {
+        const message = error instanceof Error ? error.message.slice(0, 500) : "Indexing failed.";
+        const [site] = await getDb().select({ status: products.indexStatus }).from(products).where(eq(products.id, productId));
+        // An empty index is already saved as failed, with its reason; retrying won't change it.
+        if (site && site.status !== "failed" && failures < RETRY_DELAYS_MS.length) {
+          await sleep(RETRY_DELAYS_MS[failures++]);
+          continue;
+        }
+        if (site && site.status !== "failed")
+          await getDb()
+            .update(products)
+            .set({ indexError: message, ...(site.status === "idle" ? { indexStatus: "failed" as const } : {}) })
+            .where(eq(products.id, productId));
+        console.error("Site indexing stopped", { productId, error });
+        return;
+      }
+    }
+  })()
+    .catch((error) => console.error("Site indexing job failed", { productId, error }))
+    .finally(() => {
+      jobs.delete(productId);
+      forgetIndexedPages(productId);
+    });
+  return true;
+}
+
+/** Asks the product's indexing job to stop after the page it is on. Resuming continues from the saved queue. */
+export function pauseIndexing(productId: number) {
+  const job = jobs.get(productId);
+  if (job) job.stop = true;
+  return !!job;
 }

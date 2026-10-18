@@ -6,6 +6,7 @@ import { LoaderCircleIcon, ArrowRightIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { createAgentArticleAction } from "@/app/articles/actions";
 import { DEFAULT_INPUT, type ArticleInput } from "@/lib/schemas";
+import { IndexNotice, type ProductIndex } from "./index-notice";
 import {
   ErrorMessage,
   FormGroup,
@@ -27,7 +28,7 @@ export function NewArticleForm({
   configured,
   prefill = {},
 }: {
-  products: { id: number; name: string }[];
+  products: ({ name: string } & ProductIndex)[];
   configured: boolean;
   prefill?: ArticlePrefill;
 }) {
@@ -46,6 +47,7 @@ export function NewArticleForm({
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const selected = products.find((p) => p.id === input.productId);
   function update<K extends keyof ArticleInput>(
     key: K,
     value: ArticleInput[K],
@@ -130,6 +132,7 @@ export function NewArticleForm({
               ]}
             />
           </div>
+          {selected && <IndexNotice product={selected} />}
           <div className="space-y-1.5">
             <SelectField
               label="Goal"

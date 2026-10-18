@@ -228,7 +228,7 @@ export async function publishAgentAction(id: string, version: number) {
         throw new Error("The agents are still working on this article.");
       const product = await publishingSettings(article.productId);
       if (!product?.publishing) throw new Error("Set up publishing for this product first (Products → Publishing).");
-      const publication = await publishAgentArticle(article, product.publishing);
+      const publication = await publishAgentArticle(article, product.publishing, product.storage);
       revalidatePath("/");
       return view(
         await commitAgentArticle(article, token, {

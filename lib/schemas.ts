@@ -59,19 +59,30 @@ export function defaultWebsiteSettings(name: string, websiteUrl: string): Websit
 }
 
 /**
- * Where a product's articles are published: its Outrank-compatible blog endpoint and bearer token, and the S3-compatible
- * bucket (with its public URL) that holds the article images. Kept apart from WebsiteSettings, which is copied into
- * every article and sent to the model: the token must never be.
+ * Where a product's articles are published: its blog's webhook endpoint and bearer token. Kept apart from
+ * WebsiteSettings, which is copied into every article and sent to the model: the token must never be.
  */
 export const publishingSettingsSchema = z.object({
   endpointUrl: httpUrlSchema.refine((value) => value.startsWith("https://"), "Use an https URL."),
   token: text.trim().min(1, "Add the endpoint's token."),
-  mediaBucket: text
-    .trim()
-    .regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/, "Bucket names are 3-63 lowercase letters, digits, dots and hyphens."),
-  mediaPublicUrl: httpUrlSchema.refine((value) => value.startsWith("https://"), "Use the bucket's https public URL."),
 });
 export type PublishingSettings = z.infer<typeof publishingSettingsSchema>;
+
+/**
+ * The S3-compatible storage (Cloudflare R2, AWS S3, MinIO, ...) that holds a product's article images, addressed
+ * path-style (endpoint/bucket/key), and the public URL the bucket is read from. Server-only, like the token.
+ */
+export const storageSettingsSchema = z.object({
+  endpoint: httpUrlSchema.refine((value) => value.startsWith("https://"), "Use the storage's https endpoint."),
+  region: text.trim().min(1, "Add the region (auto for Cloudflare R2).").max(50),
+  accessKeyId: text.trim().min(1, "Add the access key ID."),
+  secretAccessKey: text.trim().min(1, "Add the secret access key."),
+  bucket: text
+    .trim()
+    .regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/, "Bucket names are 3-63 lowercase letters, digits, dots and hyphens."),
+  publicUrl: httpUrlSchema.refine((value) => value.startsWith("https://"), "Use the bucket's https public URL."),
+});
+export type StorageSettings = z.infer<typeof storageSettingsSchema>;
 
 /**
  * Whether the article may name products that compete with the author's: "auto" leaves it to the writer's judgment of

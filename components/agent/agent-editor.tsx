@@ -24,6 +24,7 @@ import {
 import { agentLabel, type AgentArticle, type ArticleImage, type Section } from "@/lib/agent/types";
 import { STATUS_LABELS, formatUsd } from "./labels";
 import { AgentLog } from "./agent-log";
+import { AgentTeam } from "./agent-team";
 
 const TABS = ["Article", "SEO", "Plan", "Research", "Reviews", "Cost"] as const;
 type Tab = (typeof TABS)[number];
@@ -56,7 +57,18 @@ function Markdown({ children, allowed }: { children: string; allowed: Set<string
   );
 }
 
-export function AgentEditor({ initialArticle, publishTo }: { initialArticle: AgentArticle; publishTo: string | null }) {
+export function AgentEditor({
+  initialArticle,
+  publishTo,
+  team,
+  budgetUsd,
+}: {
+  initialArticle: AgentArticle;
+  publishTo: string | null;
+  /** The worker agents, in their usual order of work. */
+  team: string[];
+  budgetUsd: number;
+}) {
   const [article, setArticle] = useState(initialArticle);
   const [tab, setTab] = useState<Tab>("Article");
   const [busy, setBusy] = useState<string | null>(null);
@@ -110,7 +122,7 @@ export function AgentEditor({ initialArticle, publishTo }: { initialArticle: Age
         error: poll.error,
         control: poll.control,
         ...(poll.state ? { version: poll.version } : {}),
-        state: { ...(poll.state ?? prev.state), run: poll.run, timeline: [...prev.state.timeline, ...fresh] },
+        state: { ...(poll.state ?? prev.state), run: poll.run, cost: poll.cost, timeline: [...prev.state.timeline, ...fresh] },
       }));
     }, 2500);
     return () => clearInterval(timer);
@@ -159,7 +171,8 @@ export function AgentEditor({ initialArticle, publishTo }: { initialArticle: Age
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <h1 className="break-words text-2xl font-semibold tracking-tight">{article.title}</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
+            <p className="mt-1 flex flex-wrap items-center gap-x-1 text-sm text-muted-foreground">
+              {working && <LoaderCircleIcon className="size-3.5 animate-spin text-sky-500" aria-hidden />}
               {STATUS_LABELS[article.status]} · {article.wordCount.toLocaleString()} words · {formatUsd(state.cost.totalUsd)}
               {state.publication && (
                 <>
@@ -210,7 +223,8 @@ export function AgentEditor({ initialArticle, publishTo }: { initialArticle: Age
           </div>
         </div>
         {working ? (
-          <div className="space-y-2">
+          <div className="space-y-3">
+            <AgentTeam team={team} status={article.status} run={state.run} cost={state.cost} timeline={state.timeline} budgetUsd={budgetUsd} />
             <AgentLog
               events={state.timeline}
               working={

@@ -130,7 +130,7 @@ export async function getAgentArticleView(id: string) {
 
 /**
  * What a watching page needs every few seconds: the log lines from `since` on (the page drops the ones it has), the
- * status and the current agent, picked out in the database; the rest of the view only when the page asks for it and the
+ * status, the current agent and the cost so far, picked out in the database; the rest of the view only when the page asks for it and the
  * article changed. A running article's state holds megabytes of page texts and search responses.
  */
 export async function pollAgentArticle(id: string, since: string, version: number, withView: boolean) {
@@ -143,6 +143,7 @@ export async function pollAgentArticle(id: string, since: string, version: numbe
       error: agentArticles.error,
       control: agentArticles.control,
       run: sql<string | null>`json_extract(${agentArticles.state}, '$.run')`,
+      cost: sql<string>`json_extract(${agentArticles.state}, '$.cost')`,
       events: sql<string>`(select coalesce(json_group_array(json(t.value)), '[]') from json_each(${agentArticles.state}, '$.timeline') t where json_extract(t.value, '$.at') >= ${since})`,
     })
     .from(agentArticles)
@@ -159,6 +160,7 @@ export async function pollAgentArticle(id: string, since: string, version: numbe
   return {
     ...row,
     run: (row.run ? JSON.parse(row.run) : null) as AgentState["run"],
+    cost: JSON.parse(row.cost) as AgentState["cost"],
     events: JSON.parse(row.events) as TimelineEvent[],
     state,
   };
@@ -347,13 +349,15 @@ export async function getAsset(id: string) {
 export const dbAssets: AssetStore = { save: saveAsset, get: getAsset };
 export const dbMessages: MessageStore = { load: runMessages, append: appendMessages };
 
-/** The product's publishing settings (endpoint, token, bucket). Never sent to the page or a model. */
+/** The product's publishing and image storage settings (with the token and keys). Never sent to the page or a model. */
 export async function publishingSettings(productId: number) {
   const [product] = await getDb()
-    .select({ publishing: products.publishing, settings: products.websiteSettings })
+    .select({ publishing: products.publishing, storage: products.storage, settings: products.websiteSettings })
     .from(products)
     .where(eq(products.id, productId));
-  return product ? { publishing: product.publishing, host: new URL(product.settings.websiteUrl).host } : null;
+  return product
+    ? { publishing: product.publishing, storage: product.storage, host: new URL(product.settings.websiteUrl).host }
+    : null;
 }
 
 /** The product's indexed pages, for internal links. Kept for a few minutes: each carries its embedding (~30 KB). */
@@ -367,6 +371,12 @@ export async function indexedPages(productId: number) {
     .from(productPages)
     .where(eq(productPages.productId, productId));
   const pages = rows.map((r) => r.data);
-  pageCache.set(productId, { at: Date.now(), pages });
+  // An empty index may be one being built: look again next time.
+  if (pages.length) pageCache.set(productId, { at: Date.now(), pages });
   return pages;
+}
+
+/** Drops the cached pages, so articles see a fresh index as soon as indexing ends. */
+export function forgetIndexedPages(productId: number) {
+  pageCache.delete(productId);
 }

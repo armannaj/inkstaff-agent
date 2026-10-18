@@ -1,9 +1,12 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import { LoaderCircleIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
-  indexProductPagesAction,
+  getProductAction,
+  pauseIndexingAction,
   saveProductSettingsAction,
+  startIndexingAction,
 } from "@/app/products/actions";
 import type { ProductView } from "@/lib/products";
 import type { WebsiteSettings } from "@/lib/schemas";
@@ -23,16 +26,21 @@ export function ProductSettingsForm({
   const [priority, setPriority] = useState(settings.priorityPages.join("\n"));
   const [excluded, setExcluded] = useState(settings.excludedPages.join("\n"));
   const [busy, setBusy] = useState(false);
-  const [indexing, setIndexing] = useState(false);
+  const [pausing, setPausing] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState<string>();
-  const stop = useRef(false);
-  useEffect(
-    () => () => {
-      stop.current = true;
-    },
-    [],
-  );
+  const indexing = current.index === "running";
+  // The server indexes in the background; while it does, the page watches its progress.
+  useEffect(() => {
+    if (!indexing) return;
+    const timer = setInterval(async () => {
+      const result = await getProductAction(id).catch(() => undefined);
+      if (!result?.data) return;
+      setCurrent(result.data);
+      if (result.data.index !== "running") setPausing(false);
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [indexing, id]);
   const settingsDirty =
     current &&
     (name !== current.name ||
@@ -83,33 +91,14 @@ export function ProductSettingsForm({
       setBusy(false);
     }
   }
-  async function index(restart: boolean) {
-    if (!id) return;
-    stop.current = false;
-    setIndexing(true);
+  async function indexAction(call: () => ReturnType<typeof startIndexingAction>) {
     setError(undefined);
     try {
-      let first = restart;
-      do {
-        const result = await indexProductPagesAction(id, first);
-        first = false;
-        if (result.error) {
-          setError(result.error);
-          break;
-        }
-        if (!result.data) break;
-        setCurrent(result.data.product);
-        setMessage(
-          result.data.done
-            ? "Website index is ready."
-            : `${result.data.remaining} pages left to index…`,
-        );
-        if (result.data.done) break;
-      } while (!stop.current);
+      const result = await call();
+      if (result.error) setError(result.error);
+      else if (result.data) setCurrent(result.data);
     } catch {
-      setError("Indexing stopped. Resume to continue from the saved page.");
-    } finally {
-      setIndexing(false);
+      setError("Could not reach the server. Reload the page and try again.");
     }
   }
   return (
@@ -194,7 +183,7 @@ export function ProductSettingsForm({
       {current && (
         <FormGroup
           title="Website content index"
-          description="Reads the home page, priority pages and the sitemap (up to 10 sitemaps), so the agents can link to your pages. Page summaries and embeddings use your paid AI API."
+          description="Reads the home page, priority pages and the sitemap (up to 10 sitemaps), so the agents can link to your pages. Starts when the product is added and runs on the server. Page summaries and embeddings use your paid AI API."
         >
           <p className="text-sm">
             {current.indexedCount} pages indexed
@@ -202,9 +191,19 @@ export function ProductSettingsForm({
               ? ` · Last indexed ${new Date(current.indexedAt).toLocaleDateString("en-US", { timeZone: "UTC" })}`
               : ""}
           </p>
+          {indexing && (
+            <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+              <LoaderCircleIcon className="size-3.5 animate-spin" />
+              {pausing
+                ? "Pausing after the current page…"
+                : current.indexRemaining
+                  ? `Indexing: ${current.indexRemaining} pages left. You can leave this page.`
+                  : "Reading the home page and sitemap…"}
+            </p>
+          )}
           {current.indexError && (
             <p className="break-words text-xs text-amber-700 dark:text-amber-400">
-              Some pages could not be indexed: {current.indexError}
+              {current.index === "failed" ? "Indexing failed" : "Some pages could not be indexed"}: {current.indexError}
             </p>
           )}
           {settingsDirty && (
@@ -216,29 +215,22 @@ export function ProductSettingsForm({
             {indexing ? (
               <Button
                 variant="outline"
+                disabled={pausing}
                 onClick={() => {
-                  stop.current = true;
-                  setMessage("Pausing after the current page…");
+                  setPausing(true);
+                  void indexAction(() => pauseIndexingAction(id));
                 }}
               >
                 Pause indexing
               </Button>
             ) : (
-              <>
-                <Button
-                  variant="outline"
-                  disabled={busy || Boolean(settingsDirty)}
-                  onClick={() =>
-                    index(
-                      !["indexing", "processing"].includes(current.indexStatus),
-                    )
-                  }
-                >
-                  {["indexing", "processing"].includes(current.indexStatus)
-                    ? "Resume indexing"
-                    : "Index website"}
-                </Button>
-              </>
+              <Button
+                variant="outline"
+                disabled={busy || Boolean(settingsDirty)}
+                onClick={() => indexAction(() => startIndexingAction(id))}
+              >
+                {current.index === "paused" ? "Resume indexing" : "Index website"}
+              </Button>
             )}
           </div>
         </FormGroup>

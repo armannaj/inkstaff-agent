@@ -38,7 +38,7 @@ export default function NewArticlePage({ searchParams }: PageProps<"/articles/ne
 async function Form({ searchParams }: Pick<PageProps<"/articles/new">, "searchParams">) {
   await connection();
   const query = await searchParams;
-  const products = (await listProducts()).map(({ id, name }) => ({ id, name }));
+  const products = (await listProducts()).map(({ id, name, index, indexError }) => ({ id, name, index, indexError }));
   const prefill: ArticlePrefill = {
     productId: positiveId(query.product),
     primaryKeyword: first(query.keyword)?.slice(0, 200),

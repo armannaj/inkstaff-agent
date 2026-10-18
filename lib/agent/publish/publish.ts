@@ -8,7 +8,7 @@ import remarkGfm from "remark-gfm";
 import remarkRehype from "remark-rehype";
 import { youtubeVideoId } from "../web/youtube";
 import rehypeStringify from "rehype-stringify";
-import type { PublishingSettings } from "@/lib/schemas";
+import type { PublishingSettings, StorageSettings } from "@/lib/schemas";
 import { getAsset } from "../store";
 import type { AgentArticle, AgentState, Publication } from "../types";
 
@@ -68,23 +68,17 @@ export function slugify(value: string, max = 60) {
 }
 
 /**
- * The S3-compatible storage the images are uploaded to (Cloudflare R2, AWS S3, MinIO, ...), addressed path-style:
- * S3_ENDPOINT/bucket/key.
+ * The product's S3-compatible storage the images are uploaded to (Cloudflare R2, AWS S3, MinIO, ...), addressed
+ * path-style: endpoint/bucket/key.
  */
-function storage() {
-  const endpoint = process.env.S3_ENDPOINT?.trim().replace(/\/+$/, "");
-  const accessKeyId = process.env.S3_ACCESS_KEY_ID?.trim();
-  const secretAccessKey = process.env.S3_SECRET_ACCESS_KEY?.trim();
-  if (!endpoint || !accessKeyId || !secretAccessKey)
-    throw new Error("Set S3_ENDPOINT, S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY in .env.local to upload images.");
-  return {
-    client: new AwsClient({ accessKeyId, secretAccessKey, service: "s3", region: process.env.S3_REGION?.trim() || "auto" }),
-    endpoint,
-  };
+function bucketClient(storage: StorageSettings) {
+  const { accessKeyId, secretAccessKey, region } = storage;
+  return new AwsClient({ accessKeyId, secretAccessKey, service: "s3", region });
 }
+const objectUrl = (storage: StorageSettings, key: string) => `${storage.endpoint}/${storage.bucket}/${key}`;
 
 /** Uploads the cover and images as WebP under descriptive, content-addressed keys; unchanged ones aren't sent again. */
-async function uploadImages(article: AgentArticle, publishing: PublishingSettings, slug: string) {
+async function uploadImages(article: AgentArticle, storage: StorageSettings | null, slug: string) {
   const { state } = article;
   const wanted = [
     ...(state.cover?.assetId ? [{ assetId: state.cover.assetId, name: "cover", width: 1600 }] : []),
@@ -92,22 +86,23 @@ async function uploadImages(article: AgentArticle, publishing: PublishingSetting
   ];
   const previous = state.publication?.assets ?? {};
   const assets: PublishedAssets = {};
-  let bucket: ReturnType<typeof storage> | undefined;
+  let client: AwsClient | undefined;
   for (const { assetId, name, width } of wanted) {
     const asset = await getAsset(assetId);
     if (!asset) continue;
+    if (!storage) throw new Error("Set up image storage for this product first (Products → Image storage).");
     const body = await sharp(Buffer.from(asset.base64, "base64")).resize({ width, withoutEnlargement: true }).webp({ quality: 80 }).toBuffer();
     const key = `${slug}/${slugify(name) || "image"}-${createHash("sha256").update(body).digest("hex").slice(0, 8)}.webp`;
-    const url = `${publishing.mediaPublicUrl}/${key}`;
+    const url = `${storage.publicUrl}/${key}`;
     if (previous[assetId] !== url) {
-      bucket ??= storage();
-      const response = await bucket.client.fetch(`${bucket.endpoint}/${publishing.mediaBucket}/${key}`, {
+      client ??= bucketClient(storage);
+      const response = await client.fetch(objectUrl(storage, key), {
         method: "PUT",
         body: new Uint8Array(body),
         headers: { "Content-Type": "image/webp", "Cache-Control": "public, max-age=31536000, immutable" },
       });
       if (!response.ok)
-        throw new Error(`Uploading ${key} to the bucket "${publishing.mediaBucket}" failed (HTTP ${response.status}).`);
+        throw new Error(`Uploading ${key} to the bucket "${storage.bucket}" failed (HTTP ${response.status}).`);
     }
     assets[assetId] = url;
   }
@@ -115,28 +110,32 @@ async function uploadImages(article: AgentArticle, publishing: PublishingSetting
 }
 
 /** Deletes images an earlier publish uploaded that the post no longer uses, after the site accepted the update. */
-async function deleteReplaced(previous: PublishedAssets, current: PublishedAssets, publishing: PublishingSettings) {
+async function deleteReplaced(previous: PublishedAssets, current: PublishedAssets, storage: StorageSettings | null) {
+  if (!storage) return;
   const inUse = new Set(Object.values(current));
-  const prefix = `${publishing.mediaPublicUrl}/`;
+  const prefix = `${storage.publicUrl}/`;
   const stale = [...new Set(Object.values(previous))].filter((url) => !inUse.has(url) && url.startsWith(prefix));
   if (!stale.length) return;
-  const bucket = storage();
+  const client = bucketClient(storage);
   for (const url of stale)
-    await bucket.client
-      .fetch(`${bucket.endpoint}/${publishing.mediaBucket}/${url.slice(prefix.length)}`, { method: "DELETE" })
-      .catch(() => undefined);
+    await client.fetch(objectUrl(storage, url.slice(prefix.length)), { method: "DELETE" }).catch(() => undefined);
 }
 
 /**
- * Publishes to the product's blog in Outrank's webhook format. The first publish creates the post; later ones, and a
- * rewrite of an existing post, update it under its slug (the slug is fixed once published).
+ * Publishes to the product's blog webhook (publish_articles, then update_article). The first publish creates the post;
+ * later ones, and a rewrite of an existing post, update it under its slug (the slug is fixed once published). Images
+ * go to the product's storage first; an article without images publishes without it.
  */
-export async function publishAgentArticle(article: AgentArticle, publishing: PublishingSettings): Promise<Publication> {
+export async function publishAgentArticle(
+  article: AgentArticle,
+  publishing: PublishingSettings,
+  storage: StorageSettings | null,
+): Promise<Publication> {
   const { state } = article;
   if (!state.metadata || !state.sections.length) throw new Error("The article isn't finished yet.");
   const previous = state.publication;
   const slug = previous?.slug ?? state.existingPost?.slug ?? state.metadata.slug;
-  const assets = await uploadImages(article, publishing, slug);
+  const assets = await uploadImages(article, storage, slug);
   const markdown = publishMarkdown(state, assets);
   const now = new Date().toISOString();
   const update = !!previous || !!state.existingPost;
@@ -161,7 +160,7 @@ export async function publishAgentArticle(article: AgentArticle, publishing: Pub
   });
   const body = await response.text().catch(() => "");
   if (!response.ok) throw new Error(`The blog endpoint returned HTTP ${response.status}${body ? `: ${body.slice(0, 200)}` : ""}.`);
-  await deleteReplaced(previous?.assets ?? {}, assets, publishing);
+  await deleteReplaced(previous?.assets ?? {}, assets, storage);
   return {
     slug,
     url: new URL(`/blog/${slug}`, state.website.websiteUrl).href,

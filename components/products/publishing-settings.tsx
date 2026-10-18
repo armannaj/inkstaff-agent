@@ -13,22 +13,12 @@ import { Label } from "@/components/ui/label";
 /** What the browser may know about a product's publishing settings: everything except the token. */
 export type PublishingSummary = {
   endpointUrl: string;
-  mediaBucket: string;
-  mediaPublicUrl: string;
   hasToken: boolean;
 };
 
-/**
- * Where this product's articles are published: an Outrank-compatible endpoint and the S3-compatible bucket (with its
- * public URL) that holds the article images.
- */
+/** Where this product's articles are published: its blog's webhook endpoint and bearer token. */
 export function PublishingSettings({ productId, initial }: { productId: number; initial: PublishingSummary | null }) {
-  const [form, setForm] = useState({
-    endpointUrl: initial?.endpointUrl ?? "",
-    token: "",
-    mediaBucket: initial?.mediaBucket ?? "",
-    mediaPublicUrl: initial?.mediaPublicUrl ?? "",
-  });
+  const [form, setForm] = useState({ endpointUrl: initial?.endpointUrl ?? "", token: "" });
   const [hasToken, setHasToken] = useState(initial?.hasToken ?? false);
   const [configured, setConfigured] = useState(!!initial);
   const [message, setMessage] = useState<{ tone: "error" | "info"; text: string }>();
@@ -55,7 +45,7 @@ export function PublishingSettings({ productId, initial }: { productId: number; 
       if (result.error) return setMessage({ tone: "error", text: result.error });
       setHasToken(false);
       setConfigured(false);
-      setForm({ endpointUrl: "", token: "", mediaBucket: "", mediaPublicUrl: "" });
+      setForm({ endpointUrl: "", token: "" });
       setMessage({ tone: "info", text: "Publishing settings removed." });
     });
   }
@@ -63,10 +53,9 @@ export function PublishingSettings({ productId, initial }: { productId: number; 
   return (
     <div className="space-y-4">
       <p className="text-xs text-muted-foreground">
-        The editor&apos;s Publish button sends articles to this endpoint in Outrank&apos;s webhook format
-        (publish_articles, then update_article for changes). Images are uploaded first to the bucket below and linked
-        from its public URL. The storage keys are set once in the server environment (S3_ENDPOINT, S3_ACCESS_KEY_ID,
-        S3_SECRET_ACCESS_KEY).
+        The editor&apos;s Publish button POSTs the article to this endpoint as JSON with the bearer token: a
+        publish_articles event for a new post, then update_article for changes. Articles are published at
+        /blog/&lt;slug&gt; on the product&apos;s site.
       </p>
       <form
         className="space-y-3"
@@ -80,7 +69,7 @@ export function PublishingSettings({ productId, initial }: { productId: number; 
           <Input
             id="publish-endpoint"
             type="url"
-            placeholder="https://example.com/api/outrank"
+            placeholder="https://example.com/api/blog/webhook"
             value={form.endpointUrl}
             onChange={set("endpointUrl")}
           />
@@ -96,20 +85,6 @@ export function PublishingSettings({ productId, initial }: { productId: number; 
             onChange={set("token")}
           />
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1">
-            <Label htmlFor="media-bucket">Media bucket</Label>
-            <Input id="media-bucket" value={form.mediaBucket} onChange={set("mediaBucket")} />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="media-url">Bucket&apos;s public URL</Label>
-            <Input id="media-url" type="url" value={form.mediaPublicUrl} onChange={set("mediaPublicUrl")} />
-          </div>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          The bucket must be publicly readable at that URL (for Cloudflare R2: connect a custom domain in the bucket&apos;s
-          settings). If the site uses Next.js images, add the host to its images.remotePatterns.
-        </p>
         <div className="flex flex-wrap gap-2">
           <Button type="submit" variant="outline" disabled={pending}>
             {pending && <Loader2Icon className="animate-spin" />}

@@ -103,3 +103,59 @@
 .blog-prose table { display: block; width: 100%; overflow-x: auto; border-collapse: collapse; font-size: 0.85rem; }
 .blog-prose th, .blog-prose td { border: 1px solid var(--border); padding: 0.6rem 0.8rem; text-align: left; }
 .blog-prose th { background: var(--muted); }
+
+/* The live agent diagram (components/agent/agent-team.tsx). */
+.agent-flow {
+  background: repeating-linear-gradient(to bottom, oklch(0.685 0.169 237.3) 0 4px, transparent 4px 8px);
+  background-size: 100% 8px;
+  animation: agent-flow 0.5s linear infinite;
+}
+@keyframes agent-flow {
+  to {
+    background-position: 0 8px;
+  }
+}
+.agent-halo {
+  animation: agent-halo 1.8s ease-out infinite;
+}
+@keyframes agent-halo {
+  0% {
+    box-shadow: 0 0 0 0 oklch(0.685 0.169 237.3 / 0.45);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 12px oklch(0.685 0.169 237.3 / 0);
+  }
+}
+.cost-tick {
+  animation: cost-tick 1.2s ease-out;
+}
+@keyframes cost-tick {
+  from {
+    background-color: oklch(0.696 0.17 162.5 / 0.3);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+.cost-delta {
+  animation: cost-delta 1.6s ease-out forwards;
+}
+@keyframes cost-delta {
+  from {
+    opacity: 1;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-flow,
+  .agent-halo,
+  .cost-tick,
+  .cost-delta {
+    animation: none;
+  }
+}
