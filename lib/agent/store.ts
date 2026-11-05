@@ -93,7 +93,7 @@ export async function createAgentArticle(input: unknown) {
     .values({
       id,
       productId,
-      title: articleInput.primaryKeyword,
+      title: articleInput.title || articleInput.primaryKeyword,
       input: articleInput,
       state: { ...emptyState(website), ...(existingPost ? { existingPost } : {}) },
     });

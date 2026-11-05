@@ -47,7 +47,7 @@ export function assignSectionIds(next: EditorialPlan["sections"], previous: Plan
 export const submitPlan = defineTool({
   name: "submit_plan",
   description:
-    "Hand the editorial plan to the Director. Ends your work. You own the title (h1), slug, meta description and excerpt.",
+    "Hand the editorial plan to the Director. Ends your work. You own the title (h1, unless the author set it), slug, meta description and excerpt.",
   schema: EditorialPlanSchema,
   submit: true,
   async run(plan, { article, log }) {
@@ -89,15 +89,17 @@ export const submitPlan = defineTool({
       problems.push(`the author asked for at most ${input.imageCount} images; the plan has ${images}`);
     if (problems.length) return refuse(`The media plan can't be made as is: ${problems.join("; ")}.`);
     const media = plan.media.map(({ section, ...m }) => ({ ...m, what: m.what.trim(), sectionId: sections[section - 1].id }));
+    // The author's title stands when set, exactly as written.
+    const h1 = input.title || plan.h1;
     // A rewrite keeps the address of the post it replaces.
     const slug = state.existingPost?.slug ?? plan.slug;
     // The author's goal stands when set; the Editor's choice counts only when the author left it to the agents.
-    state.plan = { ...plan, goal: input.goal === "auto" ? plan.goal : input.goal, slug, sections, media };
+    state.plan = { ...plan, h1, goal: input.goal === "auto" ? plan.goal : input.goal, slug, sections, media };
     state.sections = state.sections.filter((s) => sections.some((p) => p.id === s.id));
     state.images = state.images.filter((i) => sections.some((p) => p.id === i.sectionId));
     state.videos = state.videos.filter((v) => sections.some((p) => p.id === v.sectionId));
     state.metadata = {
-      h1: plan.h1,
+      h1,
       slug,
       metaDescription: plan.metaDescription,
       excerpt: plan.excerpt,
@@ -105,7 +107,7 @@ export const submitPlan = defineTool({
       secondaryKeywords: plan.secondaryKeywords,
     };
     state.changedSinceReview = true;
-    log(`Submitted the plan: "${plan.h1}", ${sections.length} sections, ${media.length} media`, "submit");
+    log(`Submitted the plan: "${h1}", ${sections.length} sections, ${media.length} media`, "submit");
     return { submitted: true };
   },
 });

@@ -21,6 +21,7 @@ export function TextField({
   placeholder?: string;
   type?: string;
   disabled?: boolean;
+  maxLength?: number;
 }) {
   const id = useId();
   return (

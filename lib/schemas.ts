@@ -100,6 +100,10 @@ export function competitorPolicy(input: { mentionCompetitors?: unknown }): Compe
 
 export const articleInputSchema = z.object({
   primaryKeyword: text.trim().min(2).max(200),
+  /** The author's title, used exactly as written for the H1 (the page title Google shows). Empty: the Editor writes it. */
+  title: text.trim().max(200).default(""),
+  /** The author's brief for this article: what to write and how. Shapes the plan and the draft; the house rules still apply. */
+  instructions: text.trim().max(4000).default(""),
   additionalKeywords: z.array(text.trim().min(1).max(200)),
   type: z.enum(["article", "listicle"]),
   goal: z.enum(["auto", ...ARTICLE_GOALS]).default("auto"),
@@ -126,6 +130,8 @@ export const articleInputSchema = z.object({
 export type ArticleInput = z.infer<typeof articleInputSchema>;
 export const DEFAULT_INPUT: Omit<ArticleInput, "productId"> = {
   primaryKeyword: "",
+  title: "",
+  instructions: "",
   additionalKeywords: [],
   type: "article",
   goal: "auto",

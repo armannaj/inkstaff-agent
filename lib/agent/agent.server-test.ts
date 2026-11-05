@@ -120,6 +120,9 @@ test("code checks flag invented numbers, unwritten sections and title problems",
   const title = titleProblems(a, new Date("2026-10-01"));
   assert.ok(title.some((p) => /primary keyword/.test(p)));
   assert.ok(title.some((p) => /this year, 2026/.test(p)));
+  // The author's own title is used as written, so the checks don't flag it.
+  const authored = { ...a, input: { ...a.input, title: "How to Choose a Tool in 2025" } };
+  assert.deepEqual(titleProblems(authored, new Date("2026-10-01")), []);
 });
 
 test("the Director must follow the order of work, and finishes only on a clean review or at the round limit", () => {
@@ -707,6 +710,11 @@ test("the Editor's media plan must be makeable: real sections, page URLs for scr
   a.input.goal = "signups";
   await submit.run(plan([]) as never, ctx);
   assert.equal(a.state.plan!.goal, "signups", "the author's goal stands");
+  a.input.title = "How indie founders get backlinks";
+  await submit.run(plan([]) as never, ctx);
+  assert.equal(a.state.plan!.h1, "How indie founders get backlinks", "the author's title stands");
+  assert.equal(a.state.metadata!.h1, "How indie founders get backlinks");
+  a.input.title = "";
   a.input.goal = "auto";
   await submit.run(
     plan([

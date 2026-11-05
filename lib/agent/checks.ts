@@ -21,6 +21,8 @@ export function titleProblems(article: Pick<AgentArticle, "input" | "state">, no
   const title = article.state.metadata?.h1 ?? "";
   const problems: string[] = [];
   if (!title) return ["There is no title."];
+  // The author's own title is used as written: no agent can change it, so it isn't flagged.
+  if (article.input.title && title === article.input.title) return [];
   if (title.length > 65) problems.push(`The title has ${title.length} characters; Google cuts titles past about 60.`);
   const keyword = words(article.input.primaryKeyword);
   const reach = keyword.length + 3;

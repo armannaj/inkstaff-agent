@@ -109,6 +109,23 @@ export function NewArticleForm({
             placeholder="e.g. social media automation for solo founders"
           />
           <TextField
+            label="Title"
+            value={input.title}
+            onChange={(v) => update("title", v)}
+            maxLength={200}
+            placeholder="e.g. How solo founders automate social media without losing their voice"
+            help="Optional. Used exactly as written, as the article's headline and the page title Google shows. Leave blank and the agents write one."
+          />
+          <TextField
+            label="Instructions"
+            multiline
+            value={input.instructions}
+            onChange={(v) => update("instructions", v)}
+            maxLength={4000}
+            placeholder="e.g. Write a blog post comparing scheduling posts by hand in free tools against using one tool that does it automatically every week."
+            help="Optional. Tell the agents what this article should be: its angle, what to compare, what to cover or avoid. Up to 4,000 characters."
+          />
+          <TextField
             label="Additional keywords"
             multiline
             value={keywords}
