@@ -6,21 +6,25 @@ import { visit, SKIP } from "unist-util-visit";
 import { isExcluded, sameSite } from "../web/url-safety";
 import type { AgentState, ArticleInput, Section } from "../types";
 
+type LinkState = Pick<AgentState, "sitePages" | "sources" | "website" | "productMedia">;
 /**
- * Pages an article may link: pages an agent actually read, and the product's site pages agents found (never a URL
- * nobody opened). Which of them to cite is the agents' editorial call; the author's excluded pages stay out.
+ * Pages an article may link: pages an agent actually read, the product's site pages agents found, and the demos and
+ * videos the product's home page offers (never a URL nobody opened). Which of them to cite is the agents' editorial
+ * call; the author's excluded pages stay out.
  */
-export function allowedUrls(state: Pick<AgentState, "sitePages" | "sources" | "website">) {
+export function allowedUrls(state: LinkState) {
   return new Set(
-    [...state.sitePages.map((page) => page.url), ...state.sources.map((s) => s.url)].filter(
-      (url) => !isExcluded(url, state.website.excludedPages),
-    ),
+    [
+      ...state.sitePages.map((page) => page.url),
+      ...state.sources.map((s) => s.url),
+      ...(state.productMedia ?? []).map((m) => m.url),
+    ].filter((url) => !isExcluded(url, state.website.excludedPages)),
   );
 }
-export function internalUrls(state: Pick<AgentState, "sitePages" | "sources" | "website">) {
+export function internalUrls(state: LinkState) {
   return new Set([
     ...state.sitePages.map((page) => page.url),
-    ...state.sources.filter((s) => sameSite(s.url, state.website.websiteUrl)).map((s) => s.url),
+    ...[...state.sources, ...(state.productMedia ?? [])].filter((s) => sameSite(s.url, state.website.websiteUrl)).map((s) => s.url),
   ]);
 }
 /**
@@ -90,7 +94,7 @@ const limit = (value: number | "auto") => (value === "auto" ? Infinity : value);
  */
 export function cleanLinks(
   sections: Section[],
-  state: Pick<AgentState, "sitePages" | "sources" | "website"> & { plan?: AgentState["plan"] },
+  state: LinkState & { plan?: AgentState["plan"] },
   input: Pick<ArticleInput, "internalLinks" | "externalLinks">,
 ) {
   const allowed = allowedUrls(state);

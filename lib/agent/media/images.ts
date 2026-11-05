@@ -5,7 +5,8 @@ import type { AgentArticle, ArticleImage, AssetStore, Cover, InfographicSpec } f
 import { normalizeForMatch } from "../content/verify";
 import { coverStyle, type CoverStyle } from "./cover-styles";
 
-const assetId = (articleId: string, name: string) => `${articleId}-${name}-${crypto.randomUUID().slice(0, 8)}`;
+/** A new asset's ID: its owner (article or product), what it is, and a random part. */
+export const assetId = (owner: string, name: string) => `${owner}-${name}-${crypto.randomUUID().slice(0, 8)}`;
 const dataUrl = (image: { base64: string; mimeType: string }) => `data:${image.mimeType};base64,${image.base64}`;
 
 export function nextImageId(images: ArticleImage[]) {
@@ -17,13 +18,21 @@ export async function captureScreenshot(
   article: AgentArticle,
   providers: AgentProviders,
   assets: AssetStore,
-  image: Pick<ArticleImage, "id" | "sectionId" | "altText"> & { url: string },
+  image: Pick<ArticleImage, "id" | "sectionId" | "altText" | "selector"> & { url: string },
   fresh = false,
 ): Promise<ArticleImage> {
-  const base = { id: image.id, sectionId: image.sectionId, kind: "screenshot" as const, altText: image.altText, subject: image.url };
+  const base = {
+    id: image.id,
+    sectionId: image.sectionId,
+    kind: "screenshot" as const,
+    altText: image.altText,
+    subject: image.url,
+    ...(image.selector ? { selector: image.selector } : {}),
+  };
   if (!providers.screenshot) return { ...base, error: "SCREENSHOTENGINE_API_KEY is not set." };
   try {
-    const shot = await providers.screenshot(image.url, { fresh });
+    // A section is captured by its selector on the page itself: browsers abort navigation to some #fragment addresses.
+    const shot = await providers.screenshot(image.selector ? image.url.split("#")[0] : image.url, { fresh, selector: image.selector });
     const id = assetId(article.id, image.id);
     await assets.save(id, article.id, shot);
     return { ...base, assetId: id };

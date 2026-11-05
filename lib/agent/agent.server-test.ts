@@ -13,13 +13,14 @@ import { calculatedNumbers, unsupportedNumbers } from "./content/verify";
 import { reviewerTools } from "./tools/reviewer";
 import { markdownToHtml, publishMarkdown } from "./publish/publish";
 import { youtubeVideoId } from "./web/youtube";
+import { findPageMedia } from "./web/page-media";
 import { maxWords } from "./checks";
 import { task } from "./agents";
 import { AGENT_DEFINITIONS, ARTICLE_GOAL } from "./agents";
 import { emptyState } from "./store";
 import { addCost } from "./runner";
 import type { AgentProviders, ModelReply } from "./providers";
-import type { AgentArticle, AgentMessage, AgentState, PlanSection, Source } from "./types";
+import type { AgentArticle, AgentMessage, AgentState, PlanSection, ProductMedia, Source } from "./types";
 
 const website = {
   websiteUrl: "https://example.com",
@@ -73,16 +74,23 @@ const planSection = (id: string, heading: string, item: string | null = null): P
 function memoryStores() {
   const messages = new Map<string, AgentMessage[]>();
   const assets = new Map<string, { base64: string; mimeType: string }>();
+  const productAssets = new Map<string, { base64: string; mimeType: string }>();
   return {
     messages: {
       load: async (_a: string, _agent: string, runId: string) => messages.get(runId) ?? [],
       append: async (_a: string, _agent: string, runId: string, added: AgentMessage[]) =>
         void messages.set(runId, [...(messages.get(runId) ?? []), ...added]),
     },
-    assets: { save: async (id: string, _a: string, image: { base64: string; mimeType: string }) => void assets.set(id, image), get: async (id: string) => assets.get(id) ?? null },
-    raw: { messages, assets },
+    assets: {
+      save: async (id: string, _a: string, image: { base64: string; mimeType: string }) => void assets.set(id, image),
+      get: async (id: string) => assets.get(id) ?? null,
+      getProductAsset: async (id: string) => productAssets.get(id) ?? null,
+    },
+    raw: { messages, assets, productAssets },
   };
 }
+/** A review's reader check, as the Reviewer fills it in before listing issues. */
+const readerCheck = { opening: "\"Buffer costs more.\" A reader would keep reading.", recommendation: "none", hedged: [], sameness: "none", goal: "nowhere" };
 const call = (name: string, args: unknown) => ({ id: `${name}-${Math.random().toString(36).slice(2, 8)}`, name, arguments: JSON.stringify(args) });
 
 test("section IDs survive a re-plan when the heading or item is unchanged", () => {
@@ -325,8 +333,8 @@ test("a full run: research → editor → writer → graphics → reviewer, a fi
       },
     ],
     Reviewer: [
-      { content: "", toolCalls: [call("submit_review", { verdict: "approve", summary: "Fine", issues: [] })] },
-      { content: "", toolCalls: [call("submit_review", { verdict: "approve", summary: "Fine now", issues: [{ id: "x", severity: "minor", owner: "writer", sectionId: "s1", problem: "Could be warmer", fix: "Warm it up" }] })] },
+      { content: "", toolCalls: [call("submit_review", { readerCheck, evidenceWanted: [], verdict: "approve", summary: "Fine", issues: [] })] },
+      { content: "", toolCalls: [call("submit_review", { readerCheck, evidenceWanted: ["A screenshot of the author's own crossposting queue"], verdict: "approve", summary: "Fine now", issues: [{ id: "x", severity: "minor", owner: "writer", sectionId: "s1", problem: "Could be warmer", fix: "Warm it up" }] })] },
     ],
   };
   const runAgent = (agent: string, extra: object = {}) => ({ content: "", toolCalls: [call("run_agent", { agent, instructions: `Do ${agent}`, reason: "next", ...extra })] });
@@ -390,6 +398,9 @@ test("a full run: research → editor → writer → graphics → reviewer, a fi
   // Round 1: the reviewer approved, but the code check's invented-number issue turned it into "revise".
   assert.equal(state.reviews[0].verdict, "revise");
   assert.ok(state.reviews[0].issues.some((i) => i.id === "r1-check-1" && /87/.test(i.problem)));
+  assert.deepEqual(state.reviews.at(-1)!.readerCheck, readerCheck, "the reader check is kept with the review");
+  assert.deepEqual(state.reviews.at(-1)!.evidenceWanted, ["A screenshot of the author's own crossposting queue"]);
+  assert.match(AGENT_DEFINITIONS.reviewer.system, /reader check[\s\S]*major issues, not polish/);
   // The Director is one conversation: each worker's report is the result of its run_agent call, and a refused finish
   // comes back as an error it reacts to.
   const thread = directorConversations.at(-1)!;
@@ -858,4 +869,87 @@ test("videos: YouTube IDs from any URL shape; published as an embedded player (M
   a.state.usage.transcripts = 10;
   assert.match(((await tool.run({ url: "https://youtu.be/abcDEF12345" } as never, ctx)) as { error: string }).error, /No transcripts left/);
   for (const agent of ["editor", "reviewer"] as const) assert.ok(AGENT_DEFINITIONS[agent].tools().some((t) => t.name === "video_transcript"));
+});
+
+test("the home page's demos and videos: embeds, video and tour links, demo pages and sections of the page; no sales calls or background loops", () => {
+  const html = `<html><body>
+    <nav><a href="#watch">Example</a><a href="https://cal.com/acme/demo">Book a demo</a><a href="/pricing">Pricing</a></nav>
+    <video autoplay muted loop src="/hero.mp4"></video>
+    <section id="watch"><h2>Watch one week's search</h2><p>This is a made-up example for a budgeting app.</p><a href="#watch">See an example</a></section>
+    <section><h2>See it work</h2><iframe src="https://www.youtube-nocookie.com/embed/abcDEF12345" title="Acme in 2 minutes"></iframe></section>
+    <a href="https://www.loom.com/share/0123abcd">Watch the walkthrough</a>
+    <a href="https://app.arcade.software/share/xyz">Try it</a>
+    <a href="/demo">Live demo</a>
+    <a href="https://other.test/demo">Their demo</a>
+    <script>document.write('<a href="#nowhere">demo</a>')</script>
+  </body></html>`;
+  const media = findPageMedia(html, "https://acme.test/");
+  assert.deepEqual(
+    media.map(({ kind, host, url, label, selector }) => [kind, host, url, label, selector]),
+    [
+      ["video", "youtube", "https://www.youtube.com/watch?v=abcDEF12345", "Acme in 2 minutes", undefined],
+      ["demo", "section", "https://acme.test/#watch", "See an example", "#watch"],
+      ["video", "loom", "https://www.loom.com/share/0123abcd", "Watch the walkthrough", undefined],
+      ["demo", "interactive", "https://app.arcade.software/share/xyz", "Try it", undefined],
+      ["demo", "page", "https://acme.test/demo", "Live demo", undefined],
+    ],
+  );
+  assert.match(media[1].context, /made-up example/, "the text around a demo says what it is");
+});
+
+test("the product's own media: planned by ID, placed from the index's capture, retaken as the same section, its videos embedded and its links kept", async () => {
+  const stores = memoryStores();
+  stores.raw.productAssets.set("product1-section1-x", { base64: "c2hvdA==", mimeType: "image/webp" });
+  const productMedia: ProductMedia[] = [
+    { id: "pm-1", kind: "demo", url: "https://example.com/#watch", label: "See an example", host: "section", description: "A made-up example scan.", assetId: "product1-section1-x", selector: "#watch", capturedAt: "2026-11-05T00:00:00Z" },
+    { id: "pm-2", kind: "video", url: "https://www.youtube.com/watch?v=abcDEF12345", label: "Example in 2 minutes", host: "youtube", description: "", embeddable: true, channel: "Example", capturedAt: "2026-11-05T00:00:00Z" },
+  ];
+  const a = article({
+    productMedia,
+    sections: [{ id: "s1", heading: "Example", markdown: "Example scans weekly.", listItems: [] }],
+    plan: { h1: "x", sections: [planSection("s1", "Example")] } as unknown as AgentState["plan"],
+  });
+  for (const agent of ["editor", "writer", "graphics", "reviewer"] as const)
+    assert.match(AGENT_DEFINITIONS[agent].brief(a, { id: "r", agent, instructions: "", issueIds: [], turns: 0, startedAt: "" }), /The product's own media[\s\S]*pm-1/, agent);
+  assert.doesNotMatch(AGENT_DEFINITIONS.research.brief(a, { id: "r", agent: "research", instructions: "", issueIds: [], turns: 0, startedAt: "" }), /pm-1/);
+
+  const plan = (media: unknown[]) => ({
+    goal: "signups", format: "explainer", reader: "r", angle: "a", readerNeeds: [], h1: "Buffer Alternative Pricing", slug: "buffer-alternative",
+    metaDescription: "m", excerpt: "e", secondaryKeywords: [], selectionMethodology: null, targetWords: 400, coverIdea: "c",
+    sections: [{ heading: "Example", purpose: "p", keyPoints: [], sourceIds: [], item: null, answers: [], internalLinks: [], targetWords: 200 }, { heading: "Two", purpose: "p", keyPoints: [], sourceIds: [], item: null, answers: [], internalLinks: [], targetWords: 200 }],
+    media,
+  });
+  a.state.usage.videoSearches = 1;
+  const submit = AGENT_DEFINITIONS.editor.tools().find((t) => t.name === "submit_plan")!;
+  const ctx = { article: a, providers: {} as AgentProviders, assets: stores.assets, agent: "editor" as const, log: () => {}, charge: () => {} };
+  const refused = (await submit.run(plan([{ kind: "screenshot", section: 1, what: "pm-2", why: "w" }]) as never, ctx)) as { error: string };
+  assert.match(refused.error, /pm-2 isn't a captured screenshot/);
+  assert.deepEqual(
+    await submit.run(plan([{ kind: "screenshot", section: 1, what: "pm-1", why: "w" }, { kind: "video", section: 2, what: "https://www.youtube.com/watch?v=abcDEF12345", why: "w" }]) as never, ctx),
+    { submitted: true },
+  );
+
+  let captured: { url: string; selector?: string } | undefined;
+  const providers = {
+    screenshot: async (url: string, options: { selector?: string }) => ((captured = { url, selector: options.selector }), { base64: "bmV3", mimeType: "image/webp" }),
+  } as unknown as AgentProviders;
+  const graphics = (name: string) => AGENT_DEFINITIONS.graphics.tools().find((t) => t.name === name)!;
+  const gctx = { ...ctx, providers, agent: "graphics" as const };
+  assert.match(((await graphics("use_product_media").run({ mediaId: "pm-2", sectionId: "s1", altText: "x" } as never, gctx)) as { error: string }).error, /isn't a captured screenshot/);
+  const placed = (await graphics("use_product_media").run({ mediaId: "pm-1", sectionId: "s1", altText: "A made-up example scan" } as never, gctx)) as { placed: string };
+  const image = a.state.images.find((i) => i.id === placed.placed)!;
+  assert.deepEqual([image.kind, image.subject, image.selector], ["screenshot", "https://example.com/#watch", "#watch"]);
+  assert.equal(a.state.usage.screenshots, 0, "no new capture");
+  assert.deepEqual(stores.raw.assets.get(image.assetId!), { base64: "c2hvdA==", mimeType: "image/webp" }, "the article keeps its own copy");
+  await graphics("regenerate_image").run({ imageId: image.id } as never, gctx);
+  assert.deepEqual(captured, { url: "https://example.com/", selector: "#watch" }, "a retake captures the same section, by its selector");
+  assert.deepEqual(await graphics("add_video").run({ sectionId: "s1", url: "https://www.youtube.com/watch?v=abcDEF12345", reason: "r" } as never, gctx), { placed: "vid-1", sectionId: "s1" });
+  assert.equal(a.state.videos[0].title, "Example in 2 minutes");
+
+  const { removed } = cleanLinks(
+    [{ id: "s1", heading: "H", markdown: "See [the example](https://example.com/#watch) or [the video](https://www.youtube.com/watch?v=abcDEF12345).", listItems: [] }],
+    a.state,
+    { internalLinks: "auto", externalLinks: "auto" },
+  );
+  assert.deepEqual(removed, [], "the product's demos and videos may be linked");
 });

@@ -81,8 +81,13 @@ export function AgentEditor({
   const working = active(article);
   const dirty = Object.keys(drafts).length > 0 || JSON.stringify(seo) !== JSON.stringify(state.metadata);
   const allowed = useMemo(
-    () => new Set([...state.sitePages.map((p) => p.url), ...state.sources.map((s) => s.url)]),
-    [state.sitePages, state.sources],
+    () =>
+      new Set([
+        ...state.sitePages.map((p) => p.url),
+        ...state.sources.map((s) => s.url),
+        ...(state.productMedia ?? []).map((m) => m.url),
+      ]),
+    [state.sitePages, state.sources, state.productMedia],
   );
 
   // While the agents work, the page only watches: the server runs them, so the page can be closed anytime. Each poll
@@ -442,6 +447,49 @@ export function AgentEditor({
                 Round {review.round}: {review.verdict === "approve" ? "approved" : "revise"}
               </h2>
               <p className="text-sm">{review.summary}</p>
+              {review.evidenceWanted && review.evidenceWanted.length > 0 && (
+                <div className="rounded-lg border border-sky-500/40 bg-sky-500/5 p-3 text-sm">
+                  <p className="font-medium">Only you can add this</p>
+                  <p className="text-muted-foreground">
+                    The agents can&apos;t invent it. Add it as owner material, or send it in a note.
+                  </p>
+                  <ul className="mt-2 list-disc space-y-1 pl-5">
+                    {review.evidenceWanted.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {review.readerCheck && (
+                <details className="rounded-lg border text-sm">
+                  <summary className="cursor-pointer px-3 py-2 font-medium">Read as the reader</summary>
+                  <dl className="space-y-2 px-3 pb-3">
+                    {(
+                      [
+                        ["Opening", review.readerCheck.opening],
+                        ["Recommendation", review.readerCheck.recommendation],
+                        ["Sameness", review.readerCheck.sameness],
+                        ["Goal", review.readerCheck.goal],
+                      ] as const
+                    ).map(([term, text]) => (
+                      <div key={term}>
+                        <dt className="text-muted-foreground">{term}</dt>
+                        <dd>{text}</dd>
+                      </div>
+                    ))}
+                    {review.readerCheck.hedged.length > 0 && (
+                      <div>
+                        <dt className="text-muted-foreground">Hedged sentences</dt>
+                        {review.readerCheck.hedged.map((quote) => (
+                          <dd key={quote} className="border-l-2 pl-2 italic">
+                            {quote}
+                          </dd>
+                        ))}
+                      </div>
+                    )}
+                  </dl>
+                </details>
+              )}
               <ul className="space-y-2">
                 {review.issues.map((issue) => {
                   const accepted = state.decisions.some((d) => d.accepted.includes(issue.id));

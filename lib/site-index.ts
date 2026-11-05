@@ -8,8 +8,9 @@ import { productPages, products, type IndexedPage } from "@/db/schema";
 import { EMBEDDING_MODEL, SITE_INDEX_MAX_PAGES, SITE_SUMMARY_MODEL } from "@/lib/config";
 import { getAgentProviders, openRouterPost } from "@/lib/agent/providers";
 import { forgetIndexedPages } from "@/lib/agent/store";
-import { fetchPublicText, readPage } from "@/lib/agent/web/fetch-page";
-import { isExcluded, publicUrl, sameSite } from "@/lib/agent/web/url-safety";
+import { fetchPublicText, readPage, readPageWithHtml } from "@/lib/agent/web/fetch-page";
+import { isExcluded, normalizedUrl, publicUrl, sameSite } from "@/lib/agent/web/url-safety";
+import { captureSiteMedia } from "@/lib/site-media";
 import type { WebsiteSettings } from "@/lib/schemas";
 
 /**
@@ -184,7 +185,7 @@ export async function indexStep(productId: number, restart = false) {
   if (url) {
     let pageReadable = false;
     try {
-      const page = await readPage(url);
+      const { page, html } = await readPageWithHtml(url);
       if (
         !sameSite(page.url, settings.websiteUrl) ||
         !sameSite(page.canonicalUrl, settings.websiteUrl) ||
@@ -199,6 +200,11 @@ export async function indexStep(productId: number, restart = false) {
         .insert(productPages)
         .values({ productId, url: page.canonicalUrl, data })
         .onConflictDoUpdate({ target: [productPages.productId, productPages.url], set: { data } });
+      // The home page also gives the product's screenshots, demos and videos. Not a reason to stop indexing if it fails.
+      if (normalizedUrl(page.url) === normalizedUrl(settings.websiteUrl))
+        await captureSiteMedia(productId, page.url, html).catch((err) =>
+          console.error("Capturing the home page's media failed", { productId, error: err }),
+        );
     } catch (err) {
       error = `${url}: ${err instanceof Error ? err.message : "Could not index page"}`;
       if (pageReadable) {

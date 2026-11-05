@@ -150,11 +150,14 @@ export async function fetchPage(url: string) {
   return { url: response.url, html: response.text, page: extractPage(response.text, response.url) };
 }
 export async function readPage(url: string) {
-  const response = await fetchPublicText(url);
-  const page = extractPage(response.text, response.url);
+  return (await readPageWithHtml(url)).page;
+}
+/** readPage, with the page's raw HTML too (the site index looks for the home page's demos and videos in it). */
+export async function readPageWithHtml(url: string) {
+  const { html, page } = await fetchPage(url);
   if (page.content.length < 120)
     throw new Error("Page has too little readable content to use as evidence.");
-  return page;
+  return { html, page };
 }
 
 /** The post being rewritten: on the product's site, with an address ending in a slug the site stores it under. */

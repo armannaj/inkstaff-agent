@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
-import { getAsset } from "@/lib/agent/store";
+import { getAsset, getProductAsset } from "@/lib/agent/store";
 
-/** Serves the agents' images (screenshots, illustrations, covers). */
+/** Serves the agents' images (screenshots, illustrations, covers) and the site index's captures of a product's site. */
 export async function GET(request: Request, { params }: RouteContext<"/assets/[id]">) {
   const { id } = await params;
-  const asset = await getAsset(id);
+  const asset = (await getAsset(id)) ?? (await getProductAsset(id));
   if (!asset || !["image/png", "image/jpeg", "image/webp"].includes(asset.mimeType))
     return new Response("Not found", { status: 404, headers: { "Cache-Control": "no-store" } });
   const body = Buffer.from(asset.base64, "base64");

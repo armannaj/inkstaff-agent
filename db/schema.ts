@@ -1,5 +1,5 @@
 import { blob, index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
-import type { AgentMessage, AgentState, AgentStatus, ArticleInput } from "@/lib/agent/types";
+import type { AgentMessage, AgentState, AgentStatus, ArticleInput, SiteMedia } from "@/lib/agent/types";
 import type { PublishingSettings, StorageSettings, WebsiteSettings } from "@/lib/schemas";
 
 const now = () => new Date();
@@ -33,6 +33,8 @@ export const products = sqliteTable("products", {
   indexStatus: text("index_status").$type<"idle" | "indexing" | "processing" | "complete" | "failed">().notNull().default("idle"),
   indexError: text("index_error"),
   indexedAt: integer("indexed_at", { mode: "timestamp_ms" }),
+  /** What the home page offers to show the product (screenshots, demos, videos), captured when the site is indexed. */
+  siteMedia: text("site_media", { mode: "json" }).$type<SiteMedia>(),
   /** Changes with every save and indexing step: the index's lease, and a guard against concurrent saves. */
   contentUpdatedAt: text("content_updated_at").notNull().$defaultFn(() => new Date().toISOString()),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
@@ -95,6 +97,20 @@ export const agentMessages = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(now),
   },
   (t) => [index("agent_messages_run_idx").on(t.articleId, t.agent, t.runId)],
+);
+
+/** Screenshots of the product's own site, taken by the site index (lib/site-media.ts). Replaced on each indexing. */
+export const productAssets = sqliteTable(
+  "product_assets",
+  {
+    id: text("id").primaryKey(),
+    productId: integer("product_id")
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    mimeType: text("mime_type").notNull(),
+    data: blob("data", { mode: "buffer" }).notNull(),
+  },
+  (t) => [index("product_assets_product_idx").on(t.productId)],
 );
 
 /** Images (screenshots, illustrations, covers) and the raw HTML of pages read. */

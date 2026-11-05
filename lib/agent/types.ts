@@ -10,6 +10,7 @@ import type {
   ReviewReportSchema,
   SOURCE_TYPES,
 } from "./schemas";
+import type { PageMedia } from "./web/page-media";
 
 /** The agents' types. The article input (the "New article" form) is defined in lib/schemas.ts. */
 export type { ArticleInput };
@@ -50,6 +51,31 @@ export type Source = {
 };
 /** A page of the product's own site, found by site_pages; it may be linked. */
 export type SitePage = { url: string; title: string; summary: string };
+/**
+ * Something the product's home page offers that shows the product, captured when its site was indexed
+ * (lib/site-media.ts): the home page's first screen, a demo (a section of the page, another page, an interactive
+ * tour) or a video. Copied onto each article when it is created; its address may be linked from the article.
+ */
+export type ProductMedia = {
+  /** pm-N */
+  id: string;
+  kind: "screenshot" | "demo" | "video";
+  url: string;
+  label: string;
+  /** What it shows: a description of its screenshot, or else the text around it on the page. */
+  description: string;
+  host?: PageMedia["host"];
+  /** Its screenshot, in product_assets: use_product_media copies it into the article. */
+  assetId?: string;
+  /** A section of the page: the CSS selector its screenshot captures. */
+  selector?: string;
+  /** A YouTube video: it can be placed as an embedded player. */
+  embeddable?: boolean;
+  channel?: string;
+  capturedAt: string;
+};
+/** The product's media as the site index saved it (products.site_media). */
+export type SiteMedia = { pageUrl: string; capturedAt: string; items: ProductMedia[]; errors: string[] };
 
 export type ListItem = z.infer<typeof ListItemSchema>;
 export type Section = { id: string; heading: string; markdown: string; listItems: ListItem[] };
@@ -61,6 +87,8 @@ export type ArticleImage = {
   altText: string;
   /** Screenshot: the page captured. Illustration: the scene drawn. Infographic: its title. */
   subject: string;
+  /** Screenshot of one part of the page: its CSS selector, so a retake captures the same part. */
+  selector?: string;
   /** Illustrations and infographics: the technique it was drawn in, within the house style (none: the house style's own). */
   style?: string;
   /** Infographics: the exact text drawn, which the image is checked against. */
@@ -120,7 +148,10 @@ export type ReviewIssue = z.infer<typeof ReviewReportSchema>["issues"][number] &
   /** Found by the code checks rather than the reviewer. */
   fromChecks?: boolean;
 };
-export type ReviewReport = Omit<z.infer<typeof ReviewReportSchema>, "issues"> & {
+type ReviewFields = z.infer<typeof ReviewReportSchema>;
+/** The reader check and the evidence list are missing on reviews made before they existed. */
+export type ReviewReport = Omit<ReviewFields, "issues" | "readerCheck" | "evidenceWanted"> &
+  Partial<Pick<ReviewFields, "readerCheck" | "evidenceWanted">> & {
   issues: ReviewIssue[];
   round: number;
   at: string;
@@ -187,6 +218,8 @@ export type AgentState = {
   existingPost?: ExistingPost;
   sources: Source[];
   sitePages: SitePage[];
+  /** The product's own screenshots, demos and videos, as indexed when the article was created (missing on older ones). */
+  productMedia?: ProductMedia[];
   /** serp_overview results by keyword, so agents asking again don't pay again. */
   serpOverviews?: Record<string, unknown>;
   /** web_search responses by query and depth, for the same reason. */
@@ -249,6 +282,8 @@ export type AgentArticle = {
 export type AssetStore = {
   save: (id: string, articleId: string, image: { base64: string; mimeType: string }) => Promise<void>;
   get: (id: string) => Promise<{ base64: string; mimeType: string } | null>;
+  /** A capture of the product's site, saved by the site index (product_assets). */
+  getProductAsset: (id: string) => Promise<{ base64: string; mimeType: string } | null>;
 };
 /** One run's conversation is its rows in agent_messages, in order. */
 export type MessageStore = {

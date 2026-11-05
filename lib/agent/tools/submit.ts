@@ -2,7 +2,7 @@ import { z } from "zod";
 import { EditorialPlanSchema, ResearchDossierSchema } from "../schemas";
 import type { EditorialPlan, PlanSection } from "../types";
 import { defineTool, refuse } from "./types";
-import { searchedVideos } from "./graphics";
+import { placeableVideos } from "./graphics";
 import { publicUrl } from "../web/url-safety";
 
 export const submitResearch = defineTool({
@@ -70,16 +70,19 @@ export const submitPlan = defineTool({
     // The media plan: what Graphics will make. Checked so it can be made as planned.
     if (!state.usage.videoSearches)
       return refuse("Search YouTube for related videos first (search_youtube); whether the plan includes one is your call.");
-    const videos = searchedVideos(state.youtubeCache);
+    const videos = placeableVideos(state);
     const problems = plan.media.flatMap((m, i) => {
       if (m.section > sections.length) return [`media ${i + 1}: there is no section ${m.section}`];
       if (m.kind === "video" && !videos.has(m.what.trim().split("&")[0]))
-        return [`media ${i + 1}: videos must be URLs from your YouTube searches`];
-      if (m.kind === "screenshot") {
+        return [`media ${i + 1}: videos must be URLs from your YouTube searches or the product's own YouTube videos`];
+      if (m.kind === "screenshot" && /^pm-\d+$/.test(m.what.trim())) {
+        if (!state.productMedia?.some((p) => p.id === m.what.trim() && p.assetId))
+          return [`media ${i + 1}: ${m.what.trim()} isn't a captured screenshot of the product`];
+      } else if (m.kind === "screenshot") {
         try {
           publicUrl(m.what.trim());
         } catch {
-          return [`media ${i + 1}: a screenshot needs the page's URL in "what"`];
+          return [`media ${i + 1}: a screenshot needs the page's URL, or a product screenshot's ID (pm-N), in "what"`];
         }
       }
       return [];

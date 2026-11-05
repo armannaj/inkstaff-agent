@@ -12,6 +12,7 @@ import {
   type WebsiteSettings,
 } from "@/lib/schemas";
 import { isIndexing } from "@/lib/site-index";
+import type { SiteMedia } from "@/lib/agent/types";
 
 /**
  * Where the product's site index stands: built, being built now, stopped part-way (paused, or interrupted by a
@@ -36,6 +37,8 @@ export type ProductView = {
   /** Pages still queued for indexing. */
   indexRemaining: number;
   indexedAt: string | null;
+  /** What the home page offers to show the product, captured with the index; null until it is first indexed. */
+  siteMedia: SiteMedia | null;
   publishing: { endpointUrl: string; hasToken: boolean } | null;
   storage: { endpoint: string; region: string; accessKeyId: string; bucket: string; publicUrl: string; hasSecret: boolean } | null;
 };
@@ -69,6 +72,7 @@ export async function getProduct(id: number): Promise<ProductView | null> {
     indexedCount: pages,
     indexRemaining: product.indexQueue.length,
     indexedAt: product.indexedAt?.toISOString() ?? null,
+    siteMedia: product.siteMedia ?? null,
     publishing: publishing && { endpointUrl: publishing.endpointUrl, hasToken: !!publishing.token },
     storage: storage && {
       endpoint: storage.endpoint,

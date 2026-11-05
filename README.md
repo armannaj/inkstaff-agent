@@ -12,8 +12,9 @@ review:
   meta description.
 - **Writer** writes the article the plan describes.
 - **Graphics** takes screenshots, draws illustrations, infographics and the cover, and places videos.
-- **Reviewer** judges the whole article against what ranks today and the sources it was written from. It reports
-  issues with a severity and an owner.
+- **Reviewer** judges the whole article against what ranks today and the sources it was written from, and reads it as
+  its reader would: the opening, the recommendation, hedging, repeated templates, and where the reader can try the
+  product. It reports issues with a severity and an owner, and lists the firsthand evidence only you can add.
 
 Code, not the models, enforces the rules:
 
@@ -65,6 +66,9 @@ Every article is written for a product, set up under **Products**:
 - **Website and brand:** the site, its description, audience and writing guidelines, which the agents follow.
 - **Website index:** reads the home page, priority pages and sitemap, so the agents can link to your own pages. It
   starts in the background when the product is added. An article started before it finishes gets fewer internal links.
+  It also captures the home page's first screen and its demos and videos (a demo section is captured on its own), so
+  articles can show the real product. Indexing again replaces the capture; an article uses the capture from when it
+  started.
 - **Featured image style:** the house style for covers, illustrations and infographics.
 - **Publishing:** a webhook on the product's blog (`publish_articles`, then `update_article` for changes) with a bearer
   token. Articles are published at `/blog/<slug>` on the product's site. See [Publishing API](#publishing-api).

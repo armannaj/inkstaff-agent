@@ -1,7 +1,7 @@
 import "server-only";
-import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt, notInArray, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { agentArticles, agentAssets, agentMessages, productPages, products } from "@/db/schema";
+import { agentArticles, agentAssets, agentMessages, productAssets, productPages, products } from "@/db/schema";
 import { articleInputSchema } from "@/lib/schemas";
 import { articleMarkdown, wordCount } from "./content/markdown";
 import { readExistingPost } from "./web/fetch-page";
@@ -87,6 +87,7 @@ export async function createAgentArticle(input: unknown) {
   const existingPost = articleInput.rewriteUrl
     ? await readExistingPost(articleInput.rewriteUrl, website.websiteUrl)
     : undefined;
+  const [{ siteMedia }] = await getDb().select({ siteMedia: products.siteMedia }).from(products).where(eq(products.id, productId));
   const id = crypto.randomUUID();
   await getDb()
     .insert(agentArticles)
@@ -95,7 +96,11 @@ export async function createAgentArticle(input: unknown) {
       productId,
       title: articleInput.title || articleInput.primaryKeyword,
       input: articleInput,
-      state: { ...emptyState(website), ...(existingPost ? { existingPost } : {}) },
+      state: {
+        ...emptyState(website),
+        productMedia: siteMedia?.items ?? [],
+        ...(existingPost ? { existingPost } : {}),
+      },
     });
   return id;
 }
@@ -346,7 +351,27 @@ export async function getAsset(id: string) {
   return asset ? { mimeType: asset.mimeType, base64: asset.data.toString("base64") } : null;
 }
 
-export const dbAssets: AssetStore = { save: saveAsset, get: getAsset };
+/** A capture of the product's own site (lib/site-media.ts). */
+export async function getProductAsset(id: string) {
+  const [asset] = await getDb()
+    .select({ mimeType: productAssets.mimeType, data: productAssets.data })
+    .from(productAssets)
+    .where(eq(productAssets.id, id));
+  return asset ? { mimeType: asset.mimeType, base64: asset.data.toString("base64") } : null;
+}
+export async function saveProductAsset(id: string, productId: number, image: { base64: string; mimeType: string }) {
+  await getDb()
+    .insert(productAssets)
+    .values({ id, productId, mimeType: image.mimeType, data: Buffer.from(image.base64, "base64") });
+}
+/** Deletes the product's captures, except those listed (the current ones). */
+export async function deleteProductAssets(productId: number, keep: string[]) {
+  await getDb()
+    .delete(productAssets)
+    .where(and(eq(productAssets.productId, productId), ...(keep.length ? [notInArray(productAssets.id, keep)] : [])));
+}
+
+export const dbAssets: AssetStore = { save: saveAsset, get: getAsset, getProductAsset };
 export const dbMessages: MessageStore = { load: runMessages, append: appendMessages };
 
 /** The product's publishing and image storage settings (with the token and keys). Never sent to the page or a model. */

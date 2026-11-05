@@ -1,12 +1,12 @@
 import "server-only";
 import { z } from "zod";
 import { AGENT_MAX_IMAGES, AGENT_MAX_SCREENSHOTS } from "@/lib/config";
-import { captureScreenshot, describeImage, drawCover, drawIllustration, drawInfographic, houseStyle, nextImageId } from "../media/images";
+import { assetId, captureScreenshot, describeImage, drawCover, drawIllustration, drawInfographic, houseStyle, nextImageId } from "../media/images";
 import { unsupportedNumbers } from "../content/verify";
 import { MediaNotesSchema } from "../schemas";
 import { publicUrl } from "../web/url-safety";
 import { defineTool, refuse, type AgentTool, type ToolContext } from "./types";
-import type { ArticleVideo } from "../types";
+import type { AgentState, ArticleVideo } from "../types";
 
 /** When the author chose a number of images, no more are placed (the cover isn't counted). */
 function overImageLimit({ article }: ToolContext) {
@@ -124,6 +124,42 @@ const takeScreenshot = defineTool({
   },
 });
 
+const useProductMedia = defineTool({
+  name: "use_product_media",
+  description:
+    "Place a screenshot of the product's own site, captured when it was indexed (a pm-N from the product's media in your brief that has a screenshot), in a section. It shows the real product, often better than a new capture; no new capture is made, so it doesn't count against the screenshot limit. The alt text says what it shows, and an invented example on the product's page is named as one.",
+  schema: z.object({ mediaId: z.string(), sectionId: z.string(), altText: z.string() }),
+  async run({ mediaId, sectionId, altText }, ctx) {
+    const { article, assets, log } = ctx;
+    const { state } = article;
+    const media = state.productMedia?.find((m) => m.id === mediaId);
+    if (!media?.assetId)
+      return refuse(
+        `"${mediaId}" isn't a captured screenshot of the product. With one: ${(state.productMedia ?? []).filter((m) => m.assetId).map((m) => m.id).join(", ") || "none"}.`,
+      );
+    if (!sectionExists(ctx, sectionId)) return refuse(`There is no section "${sectionId}".`);
+    const overLimit = overImageLimit(ctx);
+    if (overLimit) return refuse(overLimit);
+    const capture = await assets.getProductAsset(media.assetId);
+    if (!capture) return refuse("That capture is gone: the site was indexed again after this article started. Take a screenshot instead.");
+    const id = nextImageId(state.images);
+    const saved = assetId(article.id, id);
+    await assets.save(saved, article.id, capture);
+    state.images.push({
+      id,
+      sectionId,
+      kind: "screenshot",
+      altText,
+      subject: media.url,
+      ...(media.selector ? { selector: media.selector } : {}),
+      assetId: saved,
+    });
+    state.changedSinceReview = true;
+    log(`Placed the product's ${media.label} (${mediaId}) as ${id}`);
+    return { placed: id, sectionId, shows: media.description };
+  },
+});
+
 const generateIllustration = defineTool({
   name: "generate_illustration",
   description: `Draw a wordless illustration (16:9) in the article's house style and place it in a section. Describe a concrete scene; images with any lettering are rejected. style (a technique, drawn in the house palette) is used only when the author left the image style to you. Limit ${AGENT_MAX_IMAGES} generated images per article, covers included.`,
@@ -196,7 +232,14 @@ const regenerateImage = defineTool({
         return refuse("Only public http(s) addresses can be captured.");
       }
       state.usage.screenshots++;
-      next = await captureScreenshot(article, providers, assets, { id: image.id, sectionId: image.sectionId, altText: alt, url: url ?? image.subject }, true);
+      next = await captureScreenshot(
+        article,
+        providers,
+        assets,
+        // Retaken as it was (the same section of the page), unless another page is given.
+        { id: image.id, sectionId: image.sectionId, altText: alt, url: url ?? image.subject, selector: url ? undefined : image.selector },
+        true,
+      );
     } else {
       if (state.usage.images >= AGENT_MAX_IMAGES) return refuse("No image generations left for this article.");
       state.usage.images++;
@@ -263,17 +306,25 @@ export function searchedVideos(cache: Record<string, unknown> = {}) {
   }
   return videos;
 }
+/** The videos an article may embed: from its YouTube searches, and the product's own YouTube videos. */
+export function placeableVideos(state: Pick<AgentState, "youtubeCache" | "productMedia">) {
+  const videos = searchedVideos(state.youtubeCache);
+  for (const media of state.productMedia ?? [])
+    if (media.embeddable && !videos.has(media.url))
+      videos.set(media.url, { type: "youtube_video", url: media.url, title: media.label, channel_name: media.channel });
+  return videos;
+}
 
 const addVideo = defineTool({
   name: "add_video",
-  description: "Place a planned YouTube video (a URL from this article's YouTube searches) in its section, with one sentence on why it helps the reader there. It is published as an embedded player at the end of the section.",
+  description: "Place a planned YouTube video (a URL from this article's YouTube searches, or one of the product's own YouTube videos) in its section, with one sentence on why it helps the reader there. It is published as an embedded player at the end of the section.",
   schema: z.object({ sectionId: z.string(), url: z.string().url(), reason: z.string() }),
   async run({ sectionId, url, reason }, ctx) {
     const { article, log } = ctx;
     const { state } = article;
     if (!sectionExists(ctx, sectionId)) return refuse(`There is no section "${sectionId}".`);
-    const video = searchedVideos(state.youtubeCache).get(url.split("&")[0]);
-    if (!video) return refuse("Only videos from this article's YouTube searches can be placed.");
+    const video = placeableVideos(state).get(url.split("&")[0]);
+    if (!video) return refuse("Only videos from this article's YouTube searches, or the product's own YouTube videos, can be placed.");
     if (state.videos.some((v) => v.url === video.url)) return refuse("This video is already placed.");
     const placed: ArticleVideo = {
       id: `vid-${Math.max(0, ...state.videos.map((v) => Number(v.id.slice(4)) || 0)) + 1}`,
@@ -338,6 +389,7 @@ export const graphicsTools = (): AgentTool[] => [
   listImages,
   inspectImage,
   takeScreenshot,
+  useProductMedia,
   generateIllustration,
   createInfographic,
   regenerateImage,

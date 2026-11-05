@@ -86,10 +86,13 @@ export interface AgentProviders {
     prompt: string,
     aspectRatio: string,
   ): Promise<{ base64: string; mimeType: string }>;
-  /** `fresh` skips the service's cache; `fullPage` captures the whole page rather than the first screen. */
+  /**
+   * `fresh` skips the service's cache; `fullPage` captures the whole page rather than the first screen; `selector`
+   * captures only the element it matches (a section of the page).
+   */
   screenshot?: (
     url: string,
-    options?: { fresh?: boolean; fullPage?: boolean },
+    options?: { fresh?: boolean; fullPage?: boolean; selector?: string },
   ) => Promise<{ base64: string; mimeType: string }>;
   embed(texts: string[]): Promise<number[][]>;
 }
@@ -391,7 +394,8 @@ export function getAgentProviders(onCost: OnCost): AgentProviders {
             {
               fresh = false,
               fullPage = false,
-            }: { fresh?: boolean; fullPage?: boolean } = {},
+              selector,
+            }: { fresh?: boolean; fullPage?: boolean; selector?: string } = {},
           ) {
             const response = await fetch(
               "https://api.screenshotengine.com/v1/screenshot",
@@ -407,6 +411,7 @@ export function getAgentProviders(onCost: OnCost): AgentProviders {
                   width: 1280,
                   height: fullPage ? "full" : 720,
                   blockBanners: true,
+                  ...(selector ? { selector } : {}),
                   ...(fresh ? { cachePolicy: "no-cache" } : {}),
                 }),
                 signal: AbortSignal.timeout(90_000),

@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import { LoaderCircleIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -9,6 +10,7 @@ import {
   startIndexingAction,
 } from "@/app/products/actions";
 import type { ProductView } from "@/lib/products";
+import type { ProductMedia, SiteMedia } from "@/lib/agent/types";
 import type { WebsiteSettings } from "@/lib/schemas";
 import { ErrorMessage, FormGroup, TextField } from "@/components/forms/fields";
 import { CoverStylePicker } from "@/components/forms/cover-style-picker";
@@ -183,7 +185,7 @@ export function ProductSettingsForm({
       {current && (
         <FormGroup
           title="Website content index"
-          description="Reads the home page, priority pages and the sitemap (up to 10 sitemaps), so the agents can link to your pages. Starts when the product is added and runs on the server. Page summaries and embeddings use your paid AI API."
+          description="Reads the home page, priority pages and the sitemap (up to 10 sitemaps), so the agents can link to your pages, and captures the home page's first screen and its demos and videos, so articles can show the real product. Starts when the product is added and runs on the server. Page summaries, embeddings and image descriptions use your paid AI API; screenshots use ScreenshotEngine."
         >
           <p className="text-sm">
             {current.indexedCount} pages indexed
@@ -191,6 +193,7 @@ export function ProductSettingsForm({
               ? ` · Last indexed ${new Date(current.indexedAt).toLocaleDateString("en-US", { timeZone: "UTC" })}`
               : ""}
           </p>
+          {current.siteMedia && <SiteMediaList media={current.siteMedia} />}
           {indexing && (
             <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
               <LoaderCircleIcon className="size-3.5 animate-spin" />
@@ -239,6 +242,59 @@ export function ProductSettingsForm({
       <p role="status" className="text-sm text-muted-foreground">
         {message}
       </p>
+    </div>
+  );
+}
+
+const HOSTS: Record<string, string> = { youtube: "YouTube", vimeo: "Vimeo", loom: "Loom", wistia: "Wistia", file: "Video file" };
+function mediaKind(media: ProductMedia) {
+  if (media.kind === "video") return `${HOSTS[media.host ?? ""] ?? "Video"}${media.host === "file" ? "" : " video"}${media.embeddable ? ", can be embedded" : ""}`;
+  return media.host === "section" ? "Demo on the home page" : media.host === "interactive" ? "Interactive tour" : "Demo page";
+}
+
+/** What the index captured from the home page for articles to show: its screenshots, demos and videos. */
+function SiteMediaList({ media }: { media: SiteMedia }) {
+  const shots = media.items.filter((m) => m.assetId);
+  const links = media.items.filter((m) => m.kind !== "screenshot");
+  return (
+    <div className="space-y-3">
+      <p className="text-sm">
+        From the home page, captured {new Date(media.capturedAt).toLocaleDateString("en-US", { timeZone: "UTC" })}
+      </p>
+      {shots.length > 0 && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          {shots.map((m) => (
+            <figure key={m.id} className="space-y-1">
+              <Image
+                unoptimized
+                src={`/assets/${encodeURIComponent(m.assetId!)}`}
+                alt={m.label}
+                width={1280}
+                height={720}
+                className="max-h-72 w-full rounded-lg border object-cover object-top"
+              />
+              <figcaption className="text-xs text-muted-foreground">{m.kind === "screenshot" ? m.label : `${mediaKind(m)}: ${m.label}`}</figcaption>
+            </figure>
+          ))}
+        </div>
+      )}
+      {links.length > 0 ? (
+        <ul className="space-y-1 text-sm">
+          {links.map((m) => (
+            <li key={m.id} className="break-words">
+              <a href={m.url} target="_blank" rel="noreferrer" className="underline underline-offset-4">
+                {m.label || m.url}
+              </a>{" "}
+              <span className="text-muted-foreground">· {mediaKind(m)}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-xs text-muted-foreground">No demo or video found on the home page.</p>
+      )}
+      {media.errors.length > 0 && (
+        <p className="break-words text-xs text-amber-700 dark:text-amber-400">Not captured: {media.errors.join("; ")}</p>
+      )}
     </div>
   );
 }

@@ -133,6 +133,27 @@ const houseStyle = (article: AgentArticle) => {
   const style = coverStyle(article.state.website.coverStyle);
   return `## House style (for drawn images: the cover, illustrations and infographics; screenshots show real pages as they are)\n${json({ name: style.name, cover: style.spec, coverMotif: style.motif, drawnImages: style.imagery })}`;
 };
+/**
+ * What the product's home page offers to show the product (captured when its site was indexed), for the agents that
+ * plan, write, make or judge the article. Its screenshots' files stay out: the description says what each shows.
+ */
+const productMedia = (article: AgentArticle) => {
+  const media = article.state.productMedia ?? [];
+  if (!media.length) return "";
+  const list = media.map(({ id, kind, url, label, host, assetId, embeddable, description }) => ({
+    id,
+    kind,
+    url,
+    label,
+    ...(host ? { host } : {}),
+    screenshot: !!assetId,
+    ...(embeddable ? { embeddable } : {}),
+    description,
+  }));
+  return `## The product's own media (from its home page, captured ${media[0].capturedAt.slice(0, 10)})
+It shows the real product. One with a screenshot can be planned as a screenshot by its ID (pm-N) and is placed with use_product_media; an embeddable YouTube video can be planned as a video; any of them can be linked from the text. The description says what each shows: an invented example on the product's page is labeled as one wherever the article uses it.
+${json(list)}`;
+};
 const rewriting = (article: AgentArticle, chars = 6000) =>
   article.state.existingPost && {
     note: "This article replaces an existing post at the same address. Improve on it; it is not a source.",
@@ -277,6 +298,7 @@ ${HOUSE_RULES}`,
       article.state.sitePages.length
         ? `## Product site pages found\n${json(article.state.sitePages)}`
         : "",
+      productMedia(article),
       article.state.plan
         ? `## Current plan (revise it)\n${json(article.state.plan)}`
         : "",
@@ -318,6 +340,7 @@ ${HOUSE_RULES}`,
       article.state.sitePages.length
         ? `## Product pages you may link\n${json(article.state.sitePages)}`
         : "",
+      productMedia(article),
       article.state.sections.length
         ? `## Draft so far\n${json(article.state.sections)}`
         : "",
@@ -357,7 +380,7 @@ const graphics: AgentDefinition = {
   model: AGENT_MODELS.graphics,
   maxTurns: AGENT_MAX_TURNS.graphics,
   tools: graphicsTools,
-  system: `You are the Graphics agent in a team writing one blog article. Your job: make the media in the editorial plan, as planned, and the cover: take the screenshots, draw the illustrations and infographics, place the videos. What media the article has is the Editor's decision, not yours. When something can't be made as planned (a blocked page, an image that fails its check), say so in your notes. When the Director sends review issues about media, fix them.
+  system: `You are the Graphics agent in a team writing one blog article. Your job: make the media in the editorial plan, as planned, and the cover: take the screenshots, draw the illustrations and infographics, place the videos. What media the article has is the Editor's decision, not yours. A planned screenshot whose "what" is a pm-N is the product's own capture: place it with use_product_media. When something can't be made as planned (a blocked page, an image that fails its check), say so in your notes. When the Director sends review issues about media, fix them.
 ${HOUSE_RULES}`,
   brief: (article, run) =>
     [
@@ -376,8 +399,11 @@ ${HOUSE_RULES}`,
         })),
       )}`,
       `## Read sources (sites you may screenshot)\n${json(article.state.sources.map(({ id, url, title, sourceType }) => ({ id, url, title, sourceType })))}`,
+      productMedia(article),
       `## Current media\n${json({ images: article.state.images, videos: article.state.videos, cover: article.state.cover ?? null })}`,
-    ].join("\n\n"),
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
 };
 
 const reviewer: AgentDefinition = {
@@ -419,6 +445,8 @@ const reviewer: AgentDefinition = {
   maxTurns: AGENT_MAX_TURNS.reviewer,
   tools: reviewerTools,
   system: `You are the Reviewer agent in a team writing one blog article: an editor with fresh eyes. Your job: decide whether this article, with its images and videos, would be the most useful result for its search compared with what ranks today, whether it meets its goal (in your brief), whether it is accurate, and whether it is easy to read; and report what stands in the way. You never edit. You can research as the others can, and judge every image.
+Read it also as its reader: someone who searched this and gives the page a few seconds. Would they keep reading past the opening? Do they leave knowing what to choose or do, or with a list to sort out themselves? Does it read like someone who knows the work, or like a report written not to be wrong: one template repeated in every section, a disclaimer in every paragraph, "is not", "does not" and "not guaranteed" where a plain statement would do? A limitation belongs in the text once, where it changes the reader's decision; caution repeated everywhere costs the reader and adds no accuracy. When the goal is sign-ups, a reader the product suits needs a natural point to try it. Write down what you see in the reader check before you list issues. When these hurt the article's goal, they are major issues, not polish.
+Firsthand evidence (the author's own results, screenshots from their account, customer examples) is never invented. When the article needs some that nobody supplied, put it in evidenceWanted for the author. When the article tells readers about the product without showing it, and the product's own media (in your brief) could show it, that is an issue for the editor.
 Every issue gets a severity: critical (wrong, harmful, or the core of what the searcher needs is missing), major (hurts the article's goal), minor (polish that doesn't change whether it meets its goal). Every issue names the agent that can fix it, from the team in your brief, and says what is wrong and where. Approve when nothing critical or major is left.
 The article must not use em dashes (—): they make it read as AI-written.
 ${HOUSE_RULES}`,
@@ -441,6 +469,7 @@ ${HOUSE_RULES}`,
         ? `## FAQ already on this article (published after the last section; older field, not editable)\n${json(article.state.faq)}`
         : "",
       `## Media coverage\n${json(imageCoverage(article))}`,
+      productMedia(article),
       `## Sources\n${json(sourceList(article))}`,
       previous
         ? `## Previous review (round ${previous.round}) and what the Director accepted\n${json(

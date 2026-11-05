@@ -145,7 +145,7 @@ export const EditorialPlanSchema = z.object({
         what: z
           .string()
           .describe(
-            "screenshot: the page's URL. illustration: the scene. infographic: its title and items. video: the YouTube URL, from search_youtube (published as an embedded player).",
+            "screenshot: the page's URL, or the ID (pm-N) of a screenshot of the product's own site from the product's media. illustration: the scene. infographic: its title and items. video: the YouTube URL, from search_youtube or the product's own media (published as an embedded player).",
           ),
         why: z.string(),
       }),
@@ -162,6 +162,34 @@ export const MediaNotesSchema = z.object({
 });
 
 export const ReviewReportSchema = z.object({
+  readerCheck: z
+    .object({
+      opening: z
+        .string()
+        .describe("The article's first two sentences, quoted; then whether the reader of this search would keep reading, and why."),
+      recommendation: z
+        .string()
+        .describe('Where the article tells the reader what to choose or do, quoted; or "none".'),
+      hedged: z
+        .array(z.string())
+        .describe(
+          "Up to five sentences, quoted exactly, that disclaim, qualify or attribute more than the reader needs to decide. [] when there are none.",
+        ),
+      sameness: z
+        .string()
+        .describe('Sections that repeat one template, set of labels or phrasing, named; or "none".'),
+      goal: z
+        .string()
+        .describe(
+          'How the article serves its goal (in your brief). For sign-ups: where a reader the product suits would naturally try it, quoted; or "nowhere".',
+        ),
+    })
+    .describe("What you saw reading it as its reader, before judging. Your issues follow from it."),
+  evidenceWanted: z
+    .array(z.string())
+    .describe(
+      "Firsthand material only the author can supply that would make this article clearly better than what ranks: a real result, a screenshot from their own account, a customer example, their own experience. The author sees this list. It is never an issue for an agent, since no agent may invent it. [] when nothing would help.",
+    ),
   verdict: z.enum(["approve", "revise"]),
   summary: z.string(),
   issues: z.array(
@@ -170,7 +198,7 @@ export const ReviewReportSchema = z.object({
       severity: z
         .enum(["critical", "major", "minor"])
         .describe(
-          "critical: wrong or harmful (false facts, broken promise of the title, missing core of the search intent). major: hurts the article's goal (a missing reader need, a weak or unsupported section, a misleading image). minor: polish that doesn't change whether the article meets its goal.",
+          "critical: wrong or harmful (false facts, broken promise of the title, missing core of the search intent). major: hurts the article's goal (a missing reader need, a weak or unsupported section, a misleading image, an opening the reader would leave, no recommendation where the reader needs one, hedging or one repeated template that makes it read like a report, no natural point to try the product when the goal is sign-ups). minor: polish that doesn't change whether the article meets its goal.",
         ),
       owner: z.string().describe("The name of the agent that can fix it (see team in your brief)."),
       sectionId: z.string().nullable(),
