@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, inArray, isNull, lt, notInArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, like, lt, ne, notInArray, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { agentArticles, agentAssets, agentMessages, productAssets, productPages, products } from "@/db/schema";
 import { articleInputSchema } from "@/lib/schemas";
@@ -15,6 +15,7 @@ import type {
   ArticleInput,
   AssetStore,
   MessageStore,
+  Publication,
   TimelineEvent,
   Website,
 } from "./types";
@@ -237,7 +238,8 @@ export async function commitAgentArticle(
     status?: AgentStatus;
     error?: string | null;
     control?: AgentArticle["control"];
-    publishedAt?: Date;
+    /** null: no longer published (its post was replaced by another article's). */
+    publishedAt?: Date | null;
     keepLease?: boolean;
   },
 ) {
@@ -253,7 +255,7 @@ export async function commitAgentArticle(
       wordCount: wordCount(markdown),
       error: changes.error === undefined ? article.error : changes.error,
       ...(changes.control !== undefined ? { control: changes.control } : {}),
-      ...(changes.publishedAt ? { publishedAt: changes.publishedAt } : {}),
+      ...(changes.publishedAt !== undefined ? { publishedAt: changes.publishedAt } : {}),
       updatedAt: new Date(),
       version: article.version + 1,
       leaseToken: changes.keepLease ? token : null,
@@ -271,7 +273,7 @@ export async function commitAgentArticle(
     wordCount: wordCount(markdown),
     error: changes.error === undefined ? article.error : changes.error,
     ...(changes.control !== undefined ? { control: changes.control } : {}),
-    ...(changes.publishedAt ? { publishedAt: changes.publishedAt.toISOString() } : {}),
+    ...(changes.publishedAt !== undefined ? { publishedAt: changes.publishedAt?.toISOString() ?? null } : {}),
     version: row.version,
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -383,6 +385,28 @@ export async function publishingSettings(productId: number) {
   return product
     ? { publishing: product.publishing, storage: product.storage, host: new URL(product.settings.websiteUrl).host }
     : null;
+}
+
+/** The product's other articles that are on its blog, newest first: their publication, without the rest of the state. */
+export async function publishedArticles(productId: number, exceptId: string) {
+  const publication = sql<string>`json_extract(${agentArticles.state}, '$.publication')`;
+  const rows = await getDb()
+    .select({ id: agentArticles.id, title: agentArticles.title, publication })
+    .from(agentArticles)
+    .where(and(eq(agentArticles.productId, productId), ne(agentArticles.id, exceptId), sql`${publication} is not null`))
+    .orderBy(desc(agentArticles.updatedAt));
+  return rows.map((row) => ({ id: row.id, title: row.title, publication: JSON.parse(row.publication) as Publication }));
+}
+
+/** The product's indexed pages under /blog/: address and title only (each row also carries a ~30 KB embedding). */
+export async function indexedBlogPages(productId: number) {
+  return getDb()
+    .select({
+      url: productPages.url,
+      title: sql<string | null>`coalesce(nullif(json_extract(${productPages.data}, '$.h1'), ''), json_extract(${productPages.data}, '$.title'))`,
+    })
+    .from(productPages)
+    .where(and(eq(productPages.productId, productId), like(productPages.url, "%/blog/%")));
 }
 
 /** The product's indexed pages, for internal links. Kept for a few minutes: each carries its embedding (~30 KB). */

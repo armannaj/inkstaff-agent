@@ -22,7 +22,7 @@ import { kickRunner } from "@/lib/agent/runner";
 import { cleanLinks } from "@/lib/agent/content/links";
 import { captureScreenshot, drawCover, drawIllustration, drawInfographic, houseStyle } from "@/lib/agent/media/images";
 import { getAgentProviders } from "@/lib/agent/providers";
-import { publishAgentArticle } from "@/lib/agent/publish/publish";
+import { chooseTarget, publishAgentArticle, publishTargets } from "@/lib/agent/publish/publish";
 import { publicUrl } from "@/lib/agent/web/url-safety";
 import type { AgentArticle } from "@/lib/agent/types";
 
@@ -220,24 +220,79 @@ export async function regenerateAgentCoverAction(
   );
 }
 
-export async function publishAgentAction(id: string, version: number) {
+/** The posts on the product's blog this article could replace, for the Publish dialog. */
+export async function publishTargetsAction(id: string) {
   return action(async () => {
+    const article = await getAgentArticle(idSchema.parse(id));
+    if (!article) throw new Error("Article not found.");
+    const product = await publishingSettings(article.productId);
+    return publishTargets(article, product?.storage ?? null);
+  });
+}
+
+const busyArticle = (article: AgentArticle) => article.status === "queued" || article.status === "running";
+
+/**
+ * Publishes the article: as a new post, as an update of its own, or (`replaceSlug`) in place of a post already on the
+ * blog. Replacing deletes the old post's images first, then puts this article at its address, and marks the articles
+ * that published it as replaced: they are no longer published, so they can't overwrite it.
+ */
+export async function publishAgentAction(id: string, version: number, replaceSlug: string | null = null) {
+  return action(async () => {
+    const slug = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).nullable().parse(replaceSlug);
     const { article, token } = await acquireIdle(idSchema.parse(id), versionSchema.parse(version));
+    const leases = [{ id: article.id, token }];
     try {
-      if (article.status === "queued" || article.status === "running")
-        throw new Error("The agents are still working on this article.");
+      if (busyArticle(article)) throw new Error("The agents are still working on this article.");
       const product = await publishingSettings(article.productId);
       if (!product?.publishing) throw new Error("Set up publishing for this product first (Products → Publishing).");
-      const publication = await publishAgentArticle(article, product.publishing, product.storage);
-      revalidatePath("/");
-      return view(
-        await commitAgentArticle(article, token, {
-          state: { ...article.state, publication },
-          ...(article.state.publication ? {} : { publishedAt: new Date(publication.publishedAt) }),
-        }),
+      const target = chooseTarget(article, await publishTargets(article, product.storage), slug);
+      // The articles that published the post being replaced are held until it is, so none of them updates it meanwhile.
+      const replaced: Awaited<ReturnType<typeof acquireIdle>>[] = [];
+      for (const oldId of target?.articleIds ?? []) {
+        const old = await getAgentArticle(oldId);
+        if (!old) continue;
+        const lease = await acquireIdle(old.id, old.version).catch(() => {
+          throw new Error(`"${old.title}", the article that published that post, is busy. Try again in a moment.`);
+        });
+        leases.push({ id: old.id, token: lease.token });
+        if (busyArticle(lease.article))
+          throw new Error(`The agents are working on "${old.title}", the article that published that post. Pause it first.`);
+        replaced.push(lease);
+      }
+      const publication = await publishAgentArticle(
+        article,
+        product.publishing,
+        product.storage,
+        target ? { slug: target.slug, images: replaced.flatMap((r) => Object.values(r.article.state.publication?.assets ?? {})) } : undefined,
       );
+      const next = await commitAgentArticle(article, token, {
+        state: {
+          ...article.state,
+          metadata: { ...article.state.metadata!, slug: publication.slug },
+          publication,
+          replacedBy: undefined,
+        },
+        ...(article.state.publication ? {} : { publishedAt: new Date(publication.publishedAt) }),
+      });
+      const at = new Date().toISOString();
+      for (const old of replaced)
+        await commitAgentArticle(old.article, old.token, {
+          state: {
+            ...old.article.state,
+            publication: undefined,
+            replacedBy: { articleId: next.id, title: next.title, url: publication.url, at },
+            timeline: [
+              ...old.article.state.timeline,
+              { at, agent: "system", kind: "note", text: `Replaced on the blog by "${next.title}"; its images were deleted from storage` },
+            ],
+          },
+          publishedAt: null,
+        }).catch((error) => console.error("Marking the replaced article failed", { id: old.article.id, error }));
+      revalidatePath("/");
+      return view(next);
     } catch (error) {
-      await releaseLease(article.id, token);
+      await Promise.all(leases.map((lease) => releaseLease(lease.id, lease.token)));
       throw error;
     }
   });

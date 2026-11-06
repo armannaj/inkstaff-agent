@@ -136,6 +136,22 @@ export type Publication = {
   assets: Record<string, string>;
   response: string;
 };
+/**
+ * A post on the product's blog (at /blog/<slug>) that an article not yet published can replace: it takes over the
+ * post's address, after the post's images are deleted from the product's storage.
+ */
+export type PublishTarget = {
+  slug: string;
+  url: string;
+  title: string;
+  /** Published from Inkstaff, found in the site index, or the post this article was written to rewrite. */
+  source: "inkstaff" | "index" | "rewrite";
+  /** The articles here that published it (newest first): marked as replaced once it is. */
+  articleIds: string[];
+  /** Its images in the product's image storage, deleted before the new content goes up. */
+  images: number;
+  updatedAt?: string;
+};
 
 export type ResearchDossier = z.infer<typeof ResearchDossierSchema>;
 export type EditorialPlan = z.infer<typeof EditorialPlanSchema>;
@@ -254,6 +270,8 @@ export type AgentState = {
   /** Sections or images changed after the latest review, so finishing needs a fresh one. */
   changedSinceReview: boolean;
   publication?: Publication;
+  /** Another article took over this one's post on the blog (Publish → Replace); this one is no longer published. */
+  replacedBy?: { articleId: string; title: string; url: string | null; at: string };
   /** Why the run ended, shown to the author. */
   outcome?: string;
 };

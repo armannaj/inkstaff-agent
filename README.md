@@ -71,9 +71,32 @@ Every article is written for a product, set up under **Products**:
   started.
 - **Featured image style:** the house style for covers, illustrations and infographics.
 - **Publishing:** a webhook on the product's blog (`publish_articles`, then `update_article` for changes) with a bearer
-  token. Articles are published at `/blog/<slug>` on the product's site. See [Publishing API](#publishing-api).
+  token. Articles are published at `/blog/<slug>` on the product's site. See [Publishing API](#publishing-api) and
+  [Publishing an article](#publishing-an-article).
 - **Image storage (S3):** the S3-compatible bucket (Cloudflare R2, AWS S3, MinIO) the article images are uploaded to:
   its endpoint, region, access keys, bucket and public URL. Set per product, not in the environment.
+
+## Publishing an article
+
+**Publish** in the editor opens a dialog with two choices:
+
+- **Publish as a new post** at `/blog/<slug>`, using the slug from the SEO tab. If a post is already at that address,
+  the dialog says so and won't publish over it. Replace that post instead, or change the slug.
+- **Replace a post on the blog.** Pick the post from a searchable list. The list has the product's other articles
+  published from Inkstaff, the post the article rewrites (if any), and the `/blog/<slug>` pages in the site index. The
+  article takes over that post's address, in this order:
+  1. The old post's images are deleted from the product's image storage. Only images Inkstaff uploaded can be deleted,
+     so a post that wasn't published from Inkstaff keeps its images.
+  2. The article's images are uploaded.
+  3. The post is replaced with an `update_article` under the old slug.
+  4. The article that published the old post is marked as replaced. It no longer shows as published, so it can't
+     overwrite the new post.
+
+  If deleting an old image fails, nothing is published. If the blog rejects the update after the old images are gone,
+  the old post shows without its images until you publish again.
+
+Once an article is published, **Update post** only updates its own post. An article written to rewrite a post (**Rewrite
+an existing post** on the New article form) always replaces that post.
 
 ## Publishing API
 
@@ -83,7 +106,7 @@ product's **Publishing** settings.
 
 ### Request
 
-When you click **Publish** or **Update post** in the editor, Inkstaff sends a request like this:
+When you publish, update or replace a post from the editor, Inkstaff sends a request like this:
 
 ```http
 POST <your endpoint URL>
@@ -126,8 +149,9 @@ request, but handle any number.
 ```
 
 **`update_article`**: every later publish of the same article. Inkstaff also sends this instead of `publish_articles`
-when an article rewrites a post that is already on your blog (**Rewrite an existing post** on the New article form). The
-article object is the same, except that it is a single `data.article` (not an array) and has no `created_at`.
+when an article replaces a post that is already on your blog: **Replace a post on the blog** in the Publish dialog, or
+an article written with **Rewrite an existing post** on the New article form. The article object is the same, except
+that it is a single `data.article` (not an array) and has no `created_at`.
 
 ```json
 {
@@ -166,7 +190,8 @@ About the body:
 
 - **Images** are WebP files in the product's S3 bucket, linked by absolute URLs under the bucket's public URL. If the
   site uses `next/image`, add that host to `images.remotePatterns`. When an update replaces an image, Inkstaff deletes
-  the old file from the bucket after your endpoint accepts the update.
+  the old file from the bucket after your endpoint accepts the update. When an article replaces another post, that
+  post's images are deleted before the request is sent.
 - **Videos** are YouTube `<iframe>` embeds, in both `content_markdown` and `content_html`. If your Markdown renderer
   strips raw HTML, allow iframes from `https://www.youtube.com/embed/`, or render `content_html` instead.
 - **Internal links** point to pages on your own site; external links point to the sources the article cites.

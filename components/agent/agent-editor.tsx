@@ -21,10 +21,11 @@ import {
   saveAgentEditsAction,
   sendAgentNoteAction,
 } from "@/app/articles/actions";
-import { agentLabel, type AgentArticle, type ArticleImage, type Section } from "@/lib/agent/types";
+import { agentLabel, type AgentArticle, type ArticleImage, type PublishTarget, type Section } from "@/lib/agent/types";
 import { STATUS_LABELS, formatUsd } from "./labels";
 import { AgentLog } from "./agent-log";
 import { AgentTeam } from "./agent-team";
+import { PublishDialog } from "./publish-dialog";
 
 const TABS = ["Article", "SEO", "Plan", "Research", "Reviews", "Cost"] as const;
 type Tab = (typeof TABS)[number];
@@ -77,6 +78,7 @@ export function AgentEditor({
   const [drafts, setDrafts] = useState<Record<string, Section>>({});
   const [seo, setSeo] = useState(initialArticle.state.metadata);
   const [note, setNote] = useState("");
+  const [publishing, setPublishing] = useState(false);
   const { state } = article;
   const working = active(article);
   const dirty = Object.keys(drafts).length > 0 || JSON.stringify(seo) !== JSON.stringify(state.metadata);
@@ -164,6 +166,15 @@ export function AgentEditor({
     if (ok) setDrafts({});
   }
 
+  async function publish(target: PublishTarget | null) {
+    const success = target
+      ? `Replaced "${target.title}" at /blog/${target.slug}.${target.images ? ` Its ${target.images} old image${target.images === 1 ? " was" : "s were"} deleted.` : ""}`
+      : state.publication
+        ? "Updated."
+        : "Published.";
+    if (await run("publish", () => publishAgentAction(article.id, article.version, target?.slug ?? null), success)) setPublishing(false);
+  }
+
   const lastReview = state.reviews.at(-1);
   const currentAgent = state.run?.agent;
 
@@ -185,6 +196,14 @@ export function AgentEditor({
                   <a href={state.publication.url ?? undefined} target="_blank" rel="noopener noreferrer" className="underline">
                     Published
                   </a>
+                </>
+              )}
+              {!state.publication && state.replacedBy && (
+                <>
+                  {" · Replaced on the blog by "}
+                  <Link href={`/articles/${state.replacedBy.articleId}`} className="underline">
+                    {state.replacedBy.title}
+                  </Link>
                 </>
               )}
             </p>
@@ -216,17 +235,28 @@ export function AgentEditor({
                   disabled={!!busy || dirty || !publishTo || !state.metadata}
                   title={!publishTo ? "Set up publishing for this product under Products → Publishing." : undefined}
                   onClick={() => {
-                    if (confirm(`${state.publication || state.existingPost ? "Update" : "Publish"} "${article.title}" on ${publishTo}?`))
-                      void run("publish", () => publishAgentAction(article.id, article.version), "Published.");
+                    setError(undefined);
+                    setNotice(undefined);
+                    setPublishing(true);
                   }}
                 >
                   {busy === "publish" ? <LoaderCircleIcon className="animate-spin" /> : <UploadIcon />}
-                  {state.publication || state.existingPost ? "Update post" : "Publish"}
+                  {state.publication ? "Update post" : state.existingPost ? "Replace post" : "Publish"}
                 </Button>
               </>
             )}
           </div>
         </div>
+        {publishing && publishTo && (
+          <PublishDialog
+            article={article}
+            host={publishTo}
+            busy={busy === "publish"}
+            error={error}
+            onClose={() => setPublishing(false)}
+            onPublish={publish}
+          />
+        )}
         {working ? (
           <div className="space-y-3">
             <AgentTeam team={team} status={article.status} run={state.run} cost={state.cost} timeline={state.timeline} budgetUsd={budgetUsd} />

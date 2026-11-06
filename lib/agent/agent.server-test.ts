@@ -11,7 +11,7 @@ import { htmlToMarkdown } from "./web/markdown";
 import { AGENT_MODELS } from "@/lib/config";
 import { calculatedNumbers, unsupportedNumbers } from "./content/verify";
 import { reviewerTools } from "./tools/reviewer";
-import { markdownToHtml, publishMarkdown } from "./publish/publish";
+import { chooseTarget, markdownToHtml, mergeTargets, publishAgentArticle, publishMarkdown } from "./publish/publish";
 import { youtubeVideoId } from "./web/youtube";
 import { findPageMedia } from "./web/page-media";
 import { maxWords } from "./checks";
@@ -20,7 +20,7 @@ import { AGENT_DEFINITIONS, ARTICLE_GOAL } from "./agents";
 import { emptyState } from "./store";
 import { addCost } from "./runner";
 import type { AgentProviders, ModelReply } from "./providers";
-import type { AgentArticle, AgentMessage, AgentState, PlanSection, ProductMedia, Source } from "./types";
+import type { AgentArticle, AgentMessage, AgentState, PlanSection, ProductMedia, Publication, Source } from "./types";
 
 const website = {
   websiteUrl: "https://example.com",
@@ -952,4 +952,128 @@ test("the product's own media: planned by ID, placed from the index's capture, r
     { internalLinks: "auto", externalLinks: "auto" },
   );
   assert.deepEqual(removed, [], "the product's demos and videos may be linked");
+});
+
+const storage = {
+  endpoint: "https://s3.example.net",
+  region: "auto",
+  accessKeyId: "key",
+  secretAccessKey: "secret",
+  bucket: "media",
+  publicUrl: "https://media.example.com",
+};
+const publication = (slug: string, urls: string[]): Publication => ({
+  slug,
+  url: `https://example.com/blog/${slug}`,
+  publishedAt: "2026-10-01T00:00:00.000Z",
+  updatedAt: "2026-10-02T00:00:00.000Z",
+  assets: Object.fromEntries(urls.map((url, i) => [`asset-${i}`, url])),
+  response: "",
+});
+const metadata = { h1: "New post", slug: "new-post", metaDescription: "m", excerpt: "e", primaryKeyword: "k", secondaryKeywords: [] };
+
+test("publish targets: one per address, published-from-here first with its own images, then the rewrite and the indexed blog posts", () => {
+  const targets = mergeTargets(
+    article(),
+    [
+      { id: "b", title: "Newer", publication: publication("old-post", ["https://media.example.com/old-post/a-1.webp", "https://media.example.com/old-post/a-1.webp"]) },
+      {
+        id: "c",
+        title: "Older",
+        publication: publication("old-post", [
+          "https://media.example.com/old-post/b-2.webp",
+          "https://media.old-domain.com/old-post/c-3.webp",
+          "https://media.example.com/other-post/d-4.webp",
+        ]),
+      },
+    ],
+    [
+      { url: "https://example.com/blog/old-post", title: "Indexed copy" },
+      { url: "https://example.com/blog/zebra-tips/", title: "Zebra tips" },
+      { url: "https://example.com/blog/apple-guide", title: null },
+      { url: "https://example.com/blog/2026/nested", title: "Not a post address" },
+      { url: "https://example.com/pricing", title: "Pricing" },
+    ],
+    storage,
+  );
+  assert.deepEqual(
+    targets.map((t) => [t.slug, t.title, t.source, t.articleIds, t.images]),
+    [
+      ["old-post", "Newer", "inkstaff", ["b", "c"], 3],
+      ["apple-guide", "apple-guide", "index", [], 0],
+      ["zebra-tips", "Zebra tips", "index", [], 0],
+    ],
+    "the newest article names the post; both articles' images count, once each, by their key (<slug>/<file>), also from the bucket's earlier public URL",
+  );
+  assert.equal(mergeTargets(article(), [{ id: "b", title: "T", publication: publication("p", ["https://media.example.com/p/a.webp"]) }], [], null)[0].images, 0, "without storage nothing can be deleted");
+  const rewrite = mergeTargets(article({ existingPost: { url: "https://example.com/blog/zebra-tips", slug: "zebra-tips", title: "Zebra", headings: [], content: "" } }), [], [{ url: "https://example.com/blog/zebra-tips", title: "Zebra tips" }], storage);
+  assert.deepEqual(rewrite.map((t) => [t.slug, t.source]), [["zebra-tips", "rewrite"]]);
+});
+
+test("publish target: updates stay on their own post, rewrites replace theirs, and a new post may not land on an existing one", () => {
+  const targets = mergeTargets(article(), [{ id: "b", title: "Old", publication: publication("old-post", []) }], [{ url: "https://example.com/blog/new-post", title: "Taken" }], storage);
+  assert.equal(chooseTarget(article({ metadata: { ...metadata, slug: "fresh" } }), targets, null), null, "a new post at a free address");
+  assert.throws(() => chooseTarget(article({ metadata }), targets, null), /"Taken" is already at \/blog\/new-post/);
+  assert.equal(chooseTarget(article({ metadata }), targets, "old-post")?.articleIds[0], "b");
+  assert.throws(() => chooseTarget(article({ metadata }), targets, "gone"), /no longer on the blog's list/);
+  const published = article({ metadata, publication: publication("new-post", []) });
+  assert.equal(chooseTarget(published, targets, null), null);
+  assert.equal(chooseTarget(published, targets, "new-post"), null);
+  assert.throws(() => chooseTarget(published, targets, "old-post"), /can only update its own post/);
+  const rewrite = article({ metadata, existingPost: { url: "https://example.com/blog/old-post", slug: "old-post", title: "Old", headings: [], content: "" } });
+  assert.equal(chooseTarget(rewrite, targets, null)?.slug, "old-post", "a rewrite replaces its post even when none is named");
+  assert.throws(() => chooseTarget(rewrite, targets, "new-post"), /can only replace that post/);
+});
+
+test("replacing a post: its images are deleted first, then the article goes up under the post's slug", async () => {
+  const calls: { method: string; url: string; body?: unknown }[] = [];
+  let failDelete = false;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    const body = request.method === "POST" ? JSON.parse(await request.text()) : undefined;
+    calls.push({ method: request.method, url: request.url, body });
+    if (request.method === "DELETE") return new Response(null, { status: failDelete ? 403 : 204 });
+    return new Response('{"ok":true}', { status: 200 });
+  }) as typeof fetch;
+  try {
+    const a = article({ metadata, sections: [{ id: "s1", heading: "H", markdown: "Body", listItems: [] }] });
+    const images = [
+      "https://media.example.com/old-post/a-1.webp",
+      "https://media.old-domain.com/old-post/b-2.webp",
+      "https://media.example.com/other-post/x.webp",
+      "https://media.example.com/a-1.webp",
+    ];
+    const result = await publishAgentArticle(a, { endpointUrl: "https://example.com/api/blog", token: "t" }, storage, { slug: "old-post", images });
+    assert.deepEqual(
+      calls.map((c) => [c.method, c.url]),
+      [
+        ["DELETE", "https://s3.example.net/media/old-post/a-1.webp"],
+        ["DELETE", "https://s3.example.net/media/old-post/b-2.webp"],
+        ["POST", "https://example.com/api/blog"],
+      ],
+      "only the post's own files (<slug>/<file>) are deleted, before the post is sent",
+    );
+    const sent = calls[2].body as { event_type: string; data: { article: { id: string; slug: string; title: string } } };
+    assert.equal(sent.event_type, "update_article");
+    assert.deepEqual([sent.data.article.id, sent.data.article.slug, sent.data.article.title], ["a1", "old-post", "New post"]);
+    assert.deepEqual([result.slug, result.url], ["old-post", "https://example.com/blog/old-post"]);
+
+    calls.length = 0;
+    failDelete = true;
+    await assert.rejects(
+      publishAgentArticle(a, { endpointUrl: "https://example.com/api/blog", token: "t" }, storage, { slug: "old-post", images }),
+      /Deleting the old image old-post\/a-1\.webp .* failed \(HTTP 403\)\. Nothing was published/,
+    );
+    assert.deepEqual(calls.map((c) => c.method), ["DELETE"], "a failed delete stops before anything is sent");
+
+    calls.length = 0;
+    await assert.rejects(
+      publishAgentArticle({ ...a, state: { ...a.state, publication: publication("new-post", []) } }, { endpointUrl: "https://example.com/api/blog", token: "t" }, storage, { slug: "old-post", images }),
+      /can only update its own post/,
+    );
+    assert.equal(calls.length, 0);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });
