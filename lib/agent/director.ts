@@ -2,7 +2,7 @@ import "server-only";
 import { z } from "zod";
 import { AGENT_EFFORT, AGENT_MODELS, AGENT_MAX_DIRECTOR_TURNS, AGENT_MAX_REVIEW_ROUNDS } from "@/lib/config";
 import { AGENT_DEFINITIONS, AGENT_NAMES, ARTICLE_GOAL, isAgent, product, task } from "./agents";
-import { finishVerdict, openBlockingIssues, reviewRounds } from "./rules";
+import { authorOnlyProblem, finishVerdict, handoffNotes, openBlockingIssues, polishProblem, reviewRounds } from "./rules";
 import { callSummary, REASONING_CHARS } from "./harness";
 import { toolSpec, type AgentTool } from "./tools/types";
 import type { AgentProviders } from "./providers";
@@ -30,7 +30,13 @@ export function decisionProblem(article: AgentArticle, decision: Pick<Decision, 
   }
   if (reviewRounds(article.state) >= AGENT_MAX_REVIEW_ROUNDS)
     return `The review limit (${AGENT_MAX_REVIEW_ROUNDS} rounds) is reached; finish now.`;
-  return repeatProblem(article, decision.next, decision.issueIds ?? []) ?? AGENT_DEFINITIONS[decision.next].ready(article);
+  const issueIds = decision.issueIds ?? [];
+  return (
+    authorOnlyProblem(article.state, issueIds) ??
+    polishProblem(article, decision.next, issueIds) ??
+    repeatProblem(article, decision.next, issueIds) ??
+    AGENT_DEFINITIONS[decision.next].ready(article)
+  );
 }
 
 /**
@@ -82,7 +88,7 @@ const directorTools = () => [
   {
     name: "finish",
     description:
-      "Hand the article to the author. Allowed when the latest review leaves nothing critical or major and nothing changed since, or when the review limit is reached.",
+      "Hand the article to the author. Allowed when the latest review leaves nothing critical or major (minor fixes made after it need no further review), or when the review limit is reached. The author is shown every issue that is left, spelled out.",
     schema: FinishSchema,
   },
 ];
@@ -92,8 +98,9 @@ function directorSystem() {
   return `You are the Director of a team of agents writing one blog article. You decide who works next, by calling run_agent; when an agent is done, its report comes back to you as the result. You finish with finish.
 The team:
 ${team}
-The usual flow is the team's order: ${AGENT_NAMES.join(" → ")}. Review issues carry a severity: critical and major ones must be fixed by the agent that owns them; minor ones you may accept when they don't affect the article's goal. Give each agent the issue IDs it must fix. Up to ${AGENT_MAX_REVIEW_ROUNDS} review rounds; then finish.
-You coordinate; you don't make content decisions. What the article covers, its structure, angle, length, tone and media are the Editor's decisions, judged by the Reviewer. Your instructions say what the agent must deliver or fix and pass on what it needs (review issue IDs, the author's notes); they don't say what the content should be.
+The usual flow is the team's order: ${AGENT_NAMES.join(" → ")}. Review issues carry a severity and an owner. Critical and major ones must be fixed by the agent that owns them, and the fix is reviewed again. Give each agent the issue IDs it must fix. Up to ${AGENT_MAX_REVIEW_ROUNDS} review rounds; then finish.
+When a review leaves nothing critical or major, the article is approved: finish. Before finishing you may give its minor issues one polish pass: each agent once, sent the minor issues it can fix. That work isn't reviewed again, so send only what is worth it. An issue owned by "author" is for the author: no agent can fix it, and the author sees it at handoff, as they see every issue that is left.
+You coordinate; you don't make content decisions. What the article covers, its structure, angle, length, tone and media are the Editor's decisions, judged by the Reviewer. Your instructions say what the agent must deliver or fix and pass on what it needs (review issue IDs, the author's notes); they don't say what the content should be. Every agent has the author's title, instructions and settings in its own brief: don't restate or interpret them.
 One agent at a time. If a call is refused, the result says why; choose again. If the author sends a note, act on it first.`;
 }
 
@@ -128,7 +135,8 @@ function startAgent(article: AgentArticle, decision: Decision, toolCallId: strin
 /** Ends the run: the article goes to the author. */
 export function finishArticle(article: AgentArticle, status: AgentStatus, outcome: string, log: Log) {
   article.state.run = null;
-  article.state.outcome = outcome;
+  // The author reads the outcome instead of the log: what is left is spelled out under it.
+  article.state.outcome = [outcome, ...handoffNotes(article)].join("\n");
   for (const note of article.state.humanNotes) note.handled = true;
   log("director", outcome, "decision");
   return { done: true, status };
@@ -240,11 +248,10 @@ export async function directorTurn(article: AgentArticle, ctx: DirectorContext):
       }
       state.decisions.push({ next: "finish", instructions: "", issueIds: [], accepted: parsed.data.accepted, reason: parsed.data.reason, at: new Date().toISOString() });
       answer({ finished: true });
-      const accepted = parsed.data.accepted.length ? ` Accepted minor issues: ${parsed.data.accepted.join(", ")}.` : "";
       outcome = finishArticle(
         article,
         verdict.status!,
-        verdict.status === "ready" ? `Finished: the review is clean.${accepted}` : `Finished with open issues after the review limit.${accepted} See the Reviews tab.`,
+        verdict.status === "ready" ? "Finished: the review approved the article." : "Finished with open issues. See the Reviews tab.",
         ctx.log,
       );
       acted = true;
@@ -270,4 +277,4 @@ export async function directorTurn(article: AgentArticle, ctx: DirectorContext):
   return outcome;
 }
 
-export { finishVerdict, openBlockingIssues, reviewRounds };
+export { finishVerdict, openBlockingIssues, polishProblem, reviewRounds };

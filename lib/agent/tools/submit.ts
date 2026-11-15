@@ -57,6 +57,11 @@ export const submitPlan = defineTool({
       return refuse(
         `A list article's sections are its items: give each item its own section with item set. This plan has ${items}.`,
       );
+    const unheaded = plan.sections.flatMap((s, i) => (i > 0 && !s.heading.trim() ? [i + 1] : []));
+    if (unheaded.length)
+      return refuse(
+        `Only the first section may have no heading (the article's opening). Give section ${unheaded.join(", ")} the heading it is published under.`,
+      );
     const sourceIds = new Set(state.sources.map((s) => s.id));
     const sitePages = new Set(state.sitePages.map((p) => p.url));
     const sections = assignSectionIds(

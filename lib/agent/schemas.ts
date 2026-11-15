@@ -125,7 +125,11 @@ export const EditorialPlanSchema = z.object({
   sections: z
     .array(
       z.object({
-        heading: z.string(),
+        heading: z
+          .string()
+          .describe(
+            'Published as the section\'s H2, exactly as written: never a note or a label. Only the first section may have "": it is then the article\'s opening, published directly under the title with no heading.',
+          ),
         purpose: z.string(),
         keyPoints: z.array(z.string()),
         sourceIds,
@@ -152,6 +156,11 @@ export const EditorialPlanSchema = z.object({
     )
     .describe("Every image, screenshot, infographic and video in the article, and where. [] for none. The cover is always made."),
   coverIdea: z.string().describe("What the cover should show: a short headline idea and one simple motif."),
+  leftOut: z
+    .array(z.object({ name: z.string(), reason: z.string().describe("What was tried and why nothing could be read.") }))
+    .describe(
+      "Products, tools or companies this article would cover (the author named them, or the search expects them) that it leaves out because no page about them could be read. The author is told at handoff and can supply the facts. [] when there are none.",
+    ),
 });
 
 export const DraftNotesSchema = z.object({
@@ -200,7 +209,11 @@ export const ReviewReportSchema = z.object({
         .describe(
           "critical: wrong or harmful (false facts, broken promise of the title, missing core of the search intent). major: hurts the article's goal (a missing reader need, a weak or unsupported section, a misleading image, an opening the reader would leave, no recommendation where the reader needs one, hedging or one repeated template that makes it read like a report, no natural point to try the product when the goal is sign-ups). minor: polish that doesn't change whether the article meets its goal.",
         ),
-      owner: z.string().describe("The name of the agent that can fix it (see team in your brief)."),
+      owner: z
+        .string()
+        .describe(
+          'The name of the agent whose tools can fix it (see the team and its tools in your brief). "author" when no agent\'s tools can: it is shown to the author at handoff, and no agent is sent after it.',
+        ),
       sectionId: z.string().nullable(),
       problem: z.string(),
       fix: z.string(),
@@ -220,7 +233,7 @@ export const DirectorDecisionSchema = z.object({
 
 export const SectionInputSchema = z.object({
   sectionId: z.string(),
-  heading: z.string(),
+  heading: z.string().describe('Published as the section\'s H2, exactly as written. "" for an opening the plan gave no heading.'),
   markdown: z.string().describe("The section body in Markdown, without its heading."),
   listItems: z.array(ListItemSchema).describe("For a list item section: exactly that item. Otherwise []."),
 });

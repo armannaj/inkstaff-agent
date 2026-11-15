@@ -68,7 +68,8 @@ export function headingAnchors(
     anchors.push({ heading, id });
   };
   for (const section of order) {
-    add(section.heading);
+    // The opening has no heading, so nothing to link to.
+    if (section.heading.trim()) add(section.heading);
     visit(parser.parse(section.markdown), "heading", (node) => {
       add(plainText(node));
     });

@@ -47,6 +47,14 @@ async function ArticleList() {
         </Link>
       </div>
     );
+  const listed = new Set(articles.map((a) => a.id));
+  // Articles published before the replaced post was recorded on them are found from the article they replaced.
+  const replacers = new Map(articles.flatMap((a) => (a.replacedById ? [[a.replacedById, a] as const] : [])));
+  const replacedPost = (article: ListedArticle): ReplacedPost | null => {
+    if (article.replacedTitle != null) return { title: article.replacedTitle, articleId: article.replacedArticleId };
+    const old = replacers.get(article.id);
+    return old ? { title: old.title, articleId: old.id } : null;
+  };
   return (
     <ul className="divide-y overflow-hidden rounded-xl border" aria-label="Articles">
       {articles.map((article) => (
@@ -73,21 +81,48 @@ async function ArticleList() {
             </div>
           </Link>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
-            {article.publishedAt && (
-              <a
-                href={article.publishedUrl ?? undefined}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="rounded-full bg-emerald-100 px-3 py-1 text-xs text-emerald-800 hover:underline dark:bg-emerald-950 dark:text-emerald-300"
-              >
-                Published
-              </a>
+            {article.publishedAt && <PublishedBadge article={article} replaced={replacedPost(article)} listed={listed} />}
+            {article.status !== "ready" && (
+              <span className="rounded-full bg-secondary px-3 py-1 text-xs">{STATUS_LABELS[article.status]}</span>
             )}
-            <span className="rounded-full bg-secondary px-3 py-1 text-xs">{STATUS_LABELS[article.status]}</span>
             <DeleteAgentArticle id={article.id} title={article.title} published={!!article.publishedAt} />
           </div>
         </li>
       ))}
     </ul>
+  );
+}
+
+type ListedArticle = Awaited<ReturnType<typeof listAgentArticles>>[number];
+type ReplacedPost = { title: string; articleId: string | null };
+
+/** "Published", or "Published As" with the post it took the place of underneath when it replaced one. */
+function PublishedBadge({ article, replaced, listed }: { article: ListedArticle; replaced: ReplacedPost | null; listed: Set<string> }) {
+  const badge = (
+    <a
+      href={article.publishedUrl ?? undefined}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="rounded-full bg-emerald-100 px-3 py-1 text-xs text-emerald-800 hover:underline dark:bg-emerald-950 dark:text-emerald-300"
+    >
+      {replaced ? "Published As" : "Published"}
+    </a>
+  );
+  if (!replaced) return badge;
+  const hint = `Replaced "${replaced.title}" on the blog`;
+  const text = "max-w-48 truncate text-[11px] leading-tight text-muted-foreground";
+  return (
+    <div className="flex flex-col items-start gap-1 sm:items-end">
+      {badge}
+      {replaced.articleId && listed.has(replaced.articleId) ? (
+        <Link href={`/articles/${replaced.articleId}`} title={hint} className={`${text} hover:underline`}>
+          {replaced.title}
+        </Link>
+      ) : (
+        <span title={hint} className={text}>
+          {replaced.title}
+        </span>
+      )}
+    </div>
   );
 }

@@ -19,6 +19,9 @@ export type { ArticleInput };
 export type WorkerAgent = string;
 export type AgentName = WorkerAgent | "director";
 
+/** The owner of a review issue that no agent's tools can fix: it is shown to the author, and no agent is sent after it. */
+export const AUTHOR = "author";
+
 /** "research" → "Research". */
 export const agentLabel = (name: string) => name.charAt(0).toUpperCase() + name.slice(1);
 
@@ -49,6 +52,8 @@ export type Source = {
   /** The page's raw HTML, kept in agent_assets (it can be megabytes); `content` is the extracted text code checks use. */
   rawAssetId?: string;
 };
+/** A page read_page or view_page couldn't read: an error, or a page with almost no readable text. */
+export type FailedRead = { tool: "read_page" | "view_page"; url: string; reason: string };
 /** A page of the product's own site, found by site_pages; it may be linked. */
 export type SitePage = { url: string; title: string; summary: string };
 /**
@@ -135,6 +140,8 @@ export type Publication = {
   /** Public URL of each uploaded image, by asset ID. */
   assets: Record<string, string>;
   response: string;
+  /** The post this article took the place of on the blog (Publish → Replace, or a rewrite), and the article here that published it. */
+  replaced?: { title: string; articleId?: string };
 };
 /**
  * A post on the product's blog (at /blog/<slug>) that an article not yet published can replace: it takes over the
@@ -217,7 +224,11 @@ export type AgentCost = {
 };
 
 export type Usage = {
+  /** Google searches, all agents together. */
   searches: number;
+  /** Searches and page reads by agent, which each agent's own allowance is counted from (missing on older articles). */
+  searchesBy?: Record<string, number>;
+  readsBy?: Record<string, number>;
   /** YouTube searches. */
   videoSearches: number;
   /** YouTube transcripts read (missing on older articles). */
@@ -244,8 +255,15 @@ export type AgentState = {
   youtubeCache?: Record<string, unknown>;
   /** video_transcript responses by video ID, so a transcript is paid for once. */
   transcriptCache?: Record<string, unknown>;
+  /** Pages an agent asked for that couldn't be read, and why: not tried again, and the author is told at handoff. */
+  failedReads?: FailedRead[];
   dossier?: ResearchDossier;
-  plan?: Omit<EditorialPlan, "sections" | "media"> & { sections: PlanSection[]; media?: PlannedMedia[] };
+  /** leftOut is missing on plans made before it existed. */
+  plan?: Omit<EditorialPlan, "sections" | "media" | "leftOut"> & {
+    sections: PlanSection[];
+    media?: PlannedMedia[];
+    leftOut?: EditorialPlan["leftOut"];
+  };
   sections: Section[];
   /**
    * The FAQ as a separate field, published after the last section. Older articles only: an FAQ is now a section the

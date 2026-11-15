@@ -1,7 +1,8 @@
 import "server-only";
 import { z } from "zod";
 import { AGENT_MAX_IMAGES, AGENT_MAX_SCREENSHOTS } from "@/lib/config";
-import { assetId, captureScreenshot, describeImage, drawCover, drawIllustration, drawInfographic, houseStyle, nextImageId } from "../media/images";
+import { assetId, captureScreenshot, describeImage, drawCover, drawIllustration, drawInfographic, hasPauseDash, houseStyle, nextImageId } from "../media/images";
+import { sectionLabel } from "../content/markdown";
 import { unsupportedNumbers } from "../content/verify";
 import { MediaNotesSchema } from "../schemas";
 import { publicUrl } from "../web/url-safety";
@@ -80,7 +81,7 @@ export const reviewImage = defineTool({
     const context =
       imageId === "cover"
         ? `This is the article's cover. Article title: "${state.metadata?.h1 ?? ""}". The headline drawn on it must read exactly: "${state.cover?.headline}".`
-        : `This ${image!.kind} sits in the section "${section?.heading ?? image!.sectionId}"${item ? ` about ${item}` : ""}. ${image!.kind === "screenshot" ? `It should show ${image!.subject}.` : `It was drawn to show: ${image!.subject}.`} Alt text: "${image!.altText}". Section text: ${section?.markdown.slice(0, 1500) ?? ""}`;
+        : `This ${image!.kind} sits in the section "${section ? sectionLabel(section) : image!.sectionId}"${item ? ` about ${item}` : ""}. ${image!.kind === "screenshot" ? `It should show ${image!.subject}.` : `It was drawn to show: ${image!.subject}.`} Alt text: "${image!.altText}". Section text: ${section?.markdown.slice(0, 1500) ?? ""}`;
     const raw = await providers.vision(
       `data:${asset.mimeType};base64,${asset.base64}`,
       `You review images for a blog article. ${context}
@@ -99,6 +100,8 @@ relevance: does it help a reader of this section (5 = clearly shows what the sec
 });
 
 const sectionExists = ({ article }: ToolContext, sectionId: string) => article.state.sections.some((s) => s.id === sectionId);
+/** Text an agent asks to have drawn into an image follows the article's rule: no dash as a pause. */
+const NO_DASH = "Text drawn into an image can't use a dash as a pause (—): use a colon or a comma, or put the second part in an item's detail.";
 
 const takeScreenshot = defineTool({
   name: "take_screenshot",
@@ -194,6 +197,7 @@ const generateCover = defineTool({
     artDirection: z.string().describe("One or two sentences: a single simple motif for the topic."),
   }),
   async run({ headline, artDirection }, { article, providers, assets, log }) {
+    if (hasPauseDash(headline)) return refuse(NO_DASH);
     if (article.state.usage.images >= AGENT_MAX_IMAGES - 1) return refuse("No image generations left for a cover.");
     article.state.usage.images += 2;
     const cover = await drawCover(article, providers, assets, {
@@ -258,7 +262,7 @@ const regenerateImage = defineTool({
 
 const createInfographic = defineTool({
   name: "create_infographic",
-  description: `Draw an infographic (16:9) in the article's house style with exactly the text you give: a title and 2-8 items. Its text is read back from the image and must match; numbers in it must come from the article or the pages read. Counts as a generated image (limit ${AGENT_MAX_IMAGES}).`,
+  description: `Draw an infographic (16:9) in the article's house style with exactly the text you give: a title and 2-8 items, each a label and, if it needs one, a detail drawn smaller under it. Its text is read back from the image and must match, with no dash added; numbers in it must come from the article or the pages read. Counts as a generated image (limit ${AGENT_MAX_IMAGES}).`,
   schema: z.object({
     sectionId: z.string(),
     title: z.string().min(3).max(80),
@@ -273,6 +277,7 @@ const createInfographic = defineTool({
     if (state.usage.images >= AGENT_MAX_IMAGES) return refuse("No image generations left for this article.");
     const overLimit = overImageLimit(ctx);
     if (overLimit) return refuse(overLimit);
+    if ([title, ...points.flatMap((p) => [p.label, p.detail ?? ""])].some(hasPauseDash)) return refuse(NO_DASH);
     const text = [title, ...points.flatMap((p) => [p.label, p.detail ?? ""])].join(". ");
     const evidence = [...state.sources.map((s) => s.content), ...state.sections.map((s) => s.markdown), input.ownerMaterial ?? "", state.website.productDescription].join("\n");
     const invented = unsupportedNumbers([{ id: sectionId, markdown: text }], evidence).flatMap((u) => u.missing);

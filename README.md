@@ -20,7 +20,8 @@ Code, not the models, enforces the rules:
 
 - **Spending:** a hard budget per article, plus limits on searches, page reads and images.
 - **Review:** the Director can't finish while a critical or major issue is open, and the number of review rounds is
-  capped.
+  capped. Once a review approves the article it is handed over, after at most one pass of minor fixes, with every issue
+  that is left spelled out.
 - **Facts and links:** numbers no read source contains are flagged, and links to pages nobody read are removed.
 
 The agents run in the background on the server. Every step is saved, so you can close the page, and a restart picks up

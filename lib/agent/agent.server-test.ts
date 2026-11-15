@@ -5,10 +5,15 @@ import { step } from "./engine";
 import { decisionProblem, defaultDecision, finishVerdict } from "./director";
 import { checkArticle, titleProblems } from "./checks";
 import { cleanLinks, headingAnchors } from "./content/links";
+import { articleMarkdown, pageAsPublished } from "./content/markdown";
+import { coverStyle } from "./media/cover-styles";
+import { hasPauseDash, infographicPrompt } from "./media/images";
+import { handoffNotes } from "./rules";
+import { readableChars } from "./tools/research";
 import { assignSectionIds } from "./tools/submit";
 import { callSummary, conversationForModel, runTurn } from "./harness";
 import { htmlToMarkdown } from "./web/markdown";
-import { AGENT_MODELS } from "@/lib/config";
+import { AGENT_MAX_READS, AGENT_MAX_SEARCHES, AGENT_MODELS } from "@/lib/config";
 import { calculatedNumbers, unsupportedNumbers } from "./content/verify";
 import { reviewerTools } from "./tools/reviewer";
 import { chooseTarget, markdownToHtml, mergeTargets, publishAgentArticle, publishMarkdown } from "./publish/publish";
@@ -291,6 +296,7 @@ test("a full run: research → editor → writer → graphics → reviewer, a fi
             ],
             media: [],
             coverIdea: "Pricing",
+            leftOut: [],
           })] }, // refused: YouTube not searched yet
       { content: "", toolCalls: [call("search_youtube", { query: "buffer alternatives" })] },
       { content: "", toolCalls: [call("submit_plan", {
@@ -312,6 +318,7 @@ test("a full run: research → editor → writer → graphics → reviewer, a fi
             ],
             media: [{ kind: "video", section: 1, what: "https://www.youtube.com/watch?v=abcDEF12345", why: "Shows the prices" }],
             coverIdea: "Pricing, plainly",
+            leftOut: [{ name: "Later", reason: "Its pricing page returned HTTP 404." }],
           })] },
     ],
     Writer: [
@@ -416,7 +423,25 @@ test("a full run: research → editor → writer → graphics → reviewer, a fi
   assert.equal(results.at(-1).agent, "reviewer");
   assert.deepEqual(a.state.decisions.map((d) => d.next), ["research", "editor", "writer", "graphics", "reviewer", "writer", "reviewer", "finish"]);
   assert.equal(state.reviews[1].issues.length, 1);
-  assert.match(state.outcome ?? "", /Accepted minor issues: r2-1/);
+  // The handoff spells out what is left: the issue itself, what only the author can add, and what was left out.
+  assert.equal(
+    state.outcome,
+    [
+      "Finished: the review approved the article.",
+      "Minor issues left as they are:",
+      "- Could be warmer (writer, s1)",
+      "Only you can add this (the Reviewer asks for it):",
+      "- A screenshot of the author's own crossposting queue",
+      "Left out, because no page about them could be read. Add their facts as owner material, or in a note, to have them covered:",
+      "- Later: Its pricing page returned HTTP 404.",
+    ].join("\n"),
+  );
+  assert.equal(state.timeline.at(-1)!.text, "Finished: the review approved the article.", "the log keeps the verdict line only");
+  // The Reviewer reads the page as published, and knows each agent's tools.
+  const lastReviewerBrief = [...stores.raw.messages.values()].filter((m) => m.some((x) => x.role === "tool" && x.name === "submit_review")).at(-1)![0];
+  assert.match(lastReviewerBrief.content, /# Buffer Alternative Pricing Explained\n\n<!-- section s1 -->\n## What it costs\n\nCreator is/);
+  assert.match(lastReviewerBrief.content, /- writer: .* Its tools: read_source, write_section, submit_draft\./);
+  assert.doesNotMatch(lastReviewerBrief.content, /"listItems"/);
   // The writer's out-of-order first section was refused, and the refusal reached the model.
   const writerRun = [...stores.raw.messages.values()].find((m) => m.some((x) => x.role === "tool" && x.name === "write_section"))!;
   assert.match(JSON.stringify(writerRun), /Write the sections in order/);
@@ -1076,4 +1101,224 @@ test("replacing a post: its images are deleted first, then the article goes up u
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+test("an opening without a heading: only the first section may be one; it is published under the title with no H2, and the Writer can't give it one", async () => {
+  const stores = memoryStores();
+  const a = article();
+  a.state.usage.videoSearches = 1;
+  const plan = (headings: string[]) => ({
+    goal: "traffic", format: "explainer", reader: "r", angle: "a", readerNeeds: [], h1: "Buffer Alternative Pricing", slug: "buffer-alternative",
+    metaDescription: "m", excerpt: "e", secondaryKeywords: [], selectionMethodology: null, targetWords: 400, coverIdea: "c", media: [],
+    sections: headings.map((heading) => ({ heading, purpose: "p", keyPoints: [], sourceIds: [], item: null, answers: [], internalLinks: [], targetWords: 200 })),
+  });
+  const ctx = { article: a, providers: {} as AgentProviders, assets: stores.assets, agent: "editor" as const, log: () => {}, charge: () => {} };
+  const submit = AGENT_DEFINITIONS.editor.tools().find((t) => t.name === "submit_plan")!;
+  assert.match(((await submit.run(plan(["One", " "]) as never, ctx)) as { error: string }).error, /Only the first section may have no heading.*section 2/);
+  await submit.run(plan(["", "What it costs"]) as never, ctx);
+  assert.deepEqual(a.state.plan!.sections.map((s) => s.heading), ["", "What it costs"]);
+  assert.match(checkArticle(a)[0].problem, /"Opening" isn't written/);
+
+  const write = AGENT_DEFINITIONS.writer.tools().find((t) => t.name === "write_section")!;
+  const writing = { ...ctx, agent: "writer" as const };
+  await write.run({ sectionId: "s1", heading: "Opening answer, before the first H2", markdown: "A Buffer alternative schedules posts.", listItems: [] } as never, writing);
+  await write.run({ sectionId: "s2", heading: "", markdown: "Pro is the cheap one. See [the costs](#what-it-costs).", listItems: [] } as never, writing);
+  assert.deepEqual(a.state.sections.map((s) => s.heading), ["", "What it costs"]);
+  const body = "A Buffer alternative schedules posts.\n\n## What it costs\n\nPro is the cheap one. See [the costs](#what-it-costs).";
+  assert.equal(articleMarkdown(a.state), `# Buffer Alternative Pricing\n\n${body}`);
+  assert.equal(publishMarkdown(a.state, {}), body);
+  assert.deepEqual(headingAnchors(a.state.sections, a.state.plan!.sections).map((h) => h.id), ["what-it-costs"]);
+  // A re-plan that keeps the opening keeps its text.
+  await submit.run(plan(["", "What it costs", "Who it suits"]) as never, ctx);
+  assert.deepEqual(a.state.sections.map((s) => s.id), ["s1", "s2"]);
+});
+
+test("the author's title reaches the agents as the title alone, with who set it beside it", () => {
+  const a = article();
+  assert.equal(task(a).title, "your call");
+  assert.equal("titleSetBy" in task(a), false);
+  a.input.title = "Best Buffer Alternatives in 2026";
+  assert.equal(task(a).title, "Best Buffer Alternatives in 2026");
+  assert.match(task(a).titleSetBy ?? "", /^the author\./);
+});
+
+test("an infographic item's detail goes on its own line, with no dash that would be drawn into the image", () => {
+  const prompt = infographicPrompt({ title: "Before an Agent Acts", points: [{ label: "Set Approval Rules", detail: "Human checkpoint" }, { label: "Start Small" }] }, coverStyle("blueprint"));
+  assert.match(prompt, /\n1\. Set Approval Rules\n {3}Human checkpoint\n2\. Start Small\n/);
+  assert.doesNotMatch(prompt, /[—–]/);
+});
+
+test("searches and page reads: each researching agent has its own allowance; a page that can't be read uses none and isn't tried again", async () => {
+  const stores = memoryStores();
+  const a = article();
+  let renders = 0;
+  const providers = {
+    serp: async () => ({ response: { items: [] }, organic: [] }),
+    screenshot: async (url: string) => {
+      renders++;
+      if (url === "https://broken.test/pricing") throw new Error("ScreenshotEngine returned HTTP 500: Page crashed");
+      return { base64: "aW1n", mimeType: "image/webp" };
+    },
+    vision: async () => "Standard $99 per user/month.",
+  } as unknown as AgentProviders;
+  const ctx = (agent: string) => ({ article: a, providers, assets: stores.assets, agent, log: () => {}, charge: () => {} });
+  const tool = (agent: string, name: string) => AGENT_DEFINITIONS[agent].tools().find((t) => t.name === name)!;
+  const run = (agent: string, name: string, args: object, as = agent) => tool(agent, name).run(args as never, ctx(as)) as Promise<{ error?: string; id?: string; pageReadsLeft?: number }>;
+
+  // Each agent is told its own allowance.
+  assert.ok(tool("research", "read_page").description.includes(`You have ${AGENT_MAX_READS.research} page reads`));
+  assert.ok(tool("editor", "view_page").description.includes(`You have ${AGENT_MAX_READS.editor} page reads`));
+  assert.ok(tool("reviewer", "web_search").description.includes(`You have ${AGENT_MAX_SEARCHES.reviewer} searches`));
+
+  // A page that can't be rendered uses no page read, and no agent tries the same address again.
+  assert.match((await run("research", "view_page", { url: "https://broken.test/pricing" })).error ?? "", /Could not render the page: .*Page crashed.*didn't use up a page read/);
+  assert.match((await run("editor", "view_page", { url: "https://www.broken.test/pricing/" })).error ?? "", /already failed to render/);
+  assert.equal(renders, 1);
+  // The same for a page that can't be fetched (.invalid never resolves): another address or view_page is the way on.
+  assert.match((await run("research", "read_page", { url: "https://pricing.invalid/plans" })).error ?? "", /Could not read the page: .*didn't use up a page read\. Try another address\./);
+  assert.match((await run("reviewer", "read_page", { url: "https://pricing.invalid/plans" })).error ?? "", /already failed/);
+  assert.equal(a.state.usage.reads, 0);
+  assert.deepEqual(a.state.failedReads!.map((f) => [f.tool, f.url]), [["view_page", "https://broken.test/pricing"], ["read_page", "https://pricing.invalid/plans"]]);
+  assert.deepEqual(handoffNotes(a), ["Sites the agents tried to read and couldn't: broken.test, pricing.invalid."]);
+
+  // Research used up its share: the Editor and the Reviewer still have theirs; an agent with no allowance has none.
+  a.state.usage.readsBy = { research: AGENT_MAX_READS.research };
+  a.state.usage.searchesBy = { research: AGENT_MAX_SEARCHES.research };
+  assert.match((await run("research", "view_page", { url: "https://tool.test/pricing" })).error ?? "", /no page reads left/);
+  assert.match((await run("research", "web_search", { query: "tool pricing", depth: 10 })).error ?? "", /no searches left/);
+  const viewed = await run("editor", "view_page", { url: "https://broken.test/plans" });
+  assert.deepEqual([viewed.id, viewed.pageReadsLeft], ["source-1", AGENT_MAX_READS.editor - 1]);
+  assert.deepEqual(handoffNotes(a), ["Sites the agents tried to read and couldn't: pricing.invalid."], "a site one page of which was read isn't listed");
+  assert.equal((await run("reviewer", "web_search", { query: "tool pricing", depth: 10 })).error, undefined);
+  assert.deepEqual([a.state.usage.readsBy, a.state.usage.searchesBy], [{ research: AGENT_MAX_READS.research, editor: 1 }, { research: AGENT_MAX_SEARCHES.research, reviewer: 1 }]);
+  assert.deepEqual([a.state.usage.reads, a.state.usage.searches], [1, 1], "the article's totals still count every one");
+  assert.match((await run("research", "view_page", { url: "https://tool.test/pricing" }, "writer")).error ?? "", /no page reads left/);
+
+  // A page with almost no text a reader would see is an empty read: a JavaScript shell, a login page, a bot check.
+  assert.equal(readableChars(""), 0);
+  assert.equal(readableChars("[Sign in](https://x.test/login) ![logo](https://x.test/logo.png)"), "Sign in".length);
+  assert.ok(readableChars("Verifying your request. You'll be able to continue in a few seconds. Don't refresh this page.") < 200);
+  assert.ok(readableChars(`## Pricing\n\n${"Pro costs $29 a month for one seat. ".repeat(8)}`) >= 200);
+});
+
+test("after an approving review: finish, or one polish pass of minor issues that isn't reviewed again; what only the author can fix goes to no agent", () => {
+  const issue = (id: string, owner: string, severity: "major" | "minor" = "minor") => ({ id, severity, owner, sectionId: "s1", problem: `Problem ${id}`, fix: "" });
+  const base = { instructions: "", accepted: [], reason: "" };
+  const reviewed = (issues: ReturnType<typeof issue>[], extra: Partial<AgentState> = {}) =>
+    article({
+      dossier: {} as AgentState["dossier"],
+      draftNotes: { notes: "" },
+      mediaNotes: { notes: "" },
+      cover: { headline: "x", artDirection: "", style: "", altText: "", assetId: "c1" },
+      plan: { h1: "x", sections: [planSection("s1", "One")], leftOut: [{ name: "HubSpot Breeze", reason: "Its pages returned HTTP 404." }] } as unknown as AgentState["plan"],
+      sections: [{ id: "s1", heading: "One", markdown: "Fine.", listItems: [] }],
+      reviews: [{ verdict: "approve", summary: "", round: 1, at: "2026-10-04T12:00:00.000Z", evidenceWanted: ["A screenshot from your own account"], issues }],
+      ...extra,
+    });
+
+  const a = reviewed([issue("r1-1", "writer"), issue("r1-2", "graphics"), issue("r1-3", "author")]);
+  assert.deepEqual(finishVerdict(a), { allowed: true, status: "ready" });
+  assert.match(decisionProblem(a, { ...base, next: "writer", issueIds: [] }) ?? "", /only be sent minor issues of that review \(r1-1, r1-2\), each agent once/);
+  assert.match(decisionProblem(a, { ...base, next: "writer", issueIds: ["r1-3"] }) ?? "", /r1-3: only the author can fix this/);
+  assert.match(decisionProblem(a, { ...base, next: "reviewer", issueIds: [] }) ?? "", /Finish|Nothing changed/);
+  assert.equal(decisionProblem(a, { ...base, next: "writer", issueIds: ["r1-1"] }), null);
+
+  // The polish pass: the writer fixes its issue. It can't go again, another agent can, and no review follows.
+  a.state.decisions.push({ ...base, next: "writer", issueIds: ["r1-1"], at: "2026-10-04T12:01:00.000Z" });
+  a.state.timeline.push({ at: "2026-10-04T12:02:00.000Z", agent: "writer", kind: "submit", text: "Submitted the draft" });
+  a.state.changedSinceReview = true;
+  assert.match(decisionProblem(a, { ...base, next: "writer", issueIds: ["r1-1"] }) ?? "", /already had its polish pass/);
+  assert.equal(decisionProblem(a, { ...base, next: "graphics", issueIds: ["r1-2"] }), null);
+  assert.match(decisionProblem(a, { ...base, next: "reviewer", issueIds: [] }) ?? "", /aren't reviewed again\. Finish/);
+  assert.deepEqual(finishVerdict(a), { allowed: true, status: "ready" });
+  a.state.failedReads = [{ tool: "read_page", url: "https://www.hubspot.com/products/marketing/breeze", reason: "Page returned HTTP 404." }];
+  assert.deepEqual(handoffNotes(a), [
+    "Minor issues left as they are:",
+    "- Problem r1-2 (graphics, s1)",
+    "- Problem r1-3 (author, s1)",
+    "Minor issues sent back for a last fix after the review, which wasn't reviewed again:",
+    "- Problem r1-1 (writer, s1)",
+    "Only you can add this (the Reviewer asks for it):",
+    "- A screenshot from your own account",
+    "Left out, because no page about them could be read. Add their facts as owner material, or in a note, to have them covered:",
+    "- HubSpot Breeze: Its pages returned HTTP 404.",
+    "Sites the agents tried to read and couldn't: hubspot.com.",
+  ]);
+
+  // If the polish breaks a code check, the reviewer looks once more.
+  a.state.sections[0].markdown = "It grew 340% last year.";
+  assert.match(finishVerdict(a).reason ?? "", /code checks find problems in what changed after the review \(check-1\)\. Run the reviewer/);
+  assert.match(decisionProblem(a, { ...base, next: "graphics", issueIds: ["r1-2"] }) ?? "", /Run the reviewer/);
+  assert.equal(decisionProblem(a, { ...base, next: "reviewer", issueIds: [] }), null);
+
+  // A note from the author asks for new work, which needs its own review.
+  const noted = reviewed([issue("r1-1", "writer")], { humanNotes: [{ at: "2026-10-04T13:00:00.000Z", text: "Add Later", handled: true }], changedSinceReview: true });
+  assert.match(finishVerdict(noted).reason ?? "", /review it again/);
+  assert.equal(decisionProblem(noted, { ...base, next: "writer", issueIds: [] }), null);
+
+  // What only the author can fix doesn't keep the agents going round.
+  const authors = reviewed([issue("r1-1", "author", "major")]);
+  assert.deepEqual(finishVerdict(authors), { allowed: true, status: "needs_review" });
+  assert.deepEqual(handoffNotes(authors).slice(0, 2), ["Critical or major issues from the last review:", "- major: Problem r1-1 (author, s1)"]);
+  assert.match(finishVerdict(reviewed([issue("r1-1", "author", "major"), issue("r1-2", "writer", "major")])).reason ?? "", /still open/);
+});
+
+test("the Reviewer reads the page as published: an opening without a heading, headings as H2s, each image where the site places it", () => {
+  const page = pageAsPublished({
+    metadata: { h1: "Best Tools" } as AgentState["metadata"],
+    sections: [
+      { id: "s1", heading: "", markdown: "A tool is software.", listItems: [] },
+      { id: "s2", heading: "1. Riley", markdown: "Riley suits owners.\n\nIt plans campaigns.\n\nRiley's own demonstration.", listItems: [] },
+    ],
+    images: [
+      { id: "img-1", sectionId: "s2", kind: "screenshot", altText: "Riley's demo", subject: "https://riley.test", assetId: "asset-1" },
+      { id: "img-2", sectionId: "s2", kind: "screenshot", altText: "Failed", subject: "https://riley.test/x", error: "blocked" },
+    ],
+    videos: [],
+    faq: [],
+  });
+  assert.equal(
+    page,
+    "# Best Tools\n\n<!-- section s1 -->\nA tool is software.\n\n<!-- section s2 -->\n## 1. Riley\n\nRiley suits owners.\n\n![Riley's demo](img-1)\n\nIt plans campaigns.\n\nRiley's own demonstration.",
+  );
+});
+
+test("images carry no dash as a pause: text with one isn't drawn, and an image that adds one is redrawn, then refused", async () => {
+  assert.equal(hasPauseDash("Set Approval Rules — Human checkpoint"), true);
+  assert.equal(hasPauseDash("4. Set Approval Rules —\nHuman checkpoint"), true);
+  assert.equal(hasPauseDash("Plans – compared"), true);
+  assert.equal(hasPauseDash("From $19–$49 a month"), false, "a range isn't a pause");
+  assert.equal(hasPauseDash("Before an Agent Acts\n———\n1. Choose One Job"), false, "a rule on its own line is decoration");
+
+  const stores = memoryStores();
+  const a = article();
+  a.state.sections = [{ id: "s1", heading: "How to choose", markdown: "Choose one job.", listItems: [] }];
+  const shown: string[] = [];
+  let drawn = 0;
+  const providers = {
+    generateImage: async () => (drawn++, { base64: "aW1n", mimeType: "image/png" }),
+    vision: async () => shown.shift() ?? "",
+  } as unknown as AgentProviders;
+  const ctx = { article: a, providers, assets: stores.assets, agent: "graphics" as const, log: () => {}, charge: () => {} };
+  const tool = (name: string) => AGENT_DEFINITIONS.graphics.tools().find((t) => t.name === name)!;
+  const spec = (points: object[]) => ({ sectionId: "s1", title: "Before an Agent Acts", points, altText: "Steps" });
+
+  const typed = (await tool("create_infographic").run(spec([{ label: "Set Approval Rules — Human checkpoint" }, { label: "Start Small" }]) as never, ctx)) as { error: string };
+  assert.match(typed.error, /can't use a dash as a pause/);
+  assert.match(((await tool("generate_cover").run({ headline: "Agents — Compared", artDirection: "a node" } as never, ctx)) as { error: string }).error, /can't use a dash/);
+  assert.equal(drawn, 0);
+
+  const points = [{ label: "Set Approval Rules", detail: "Human checkpoint" }, { label: "Start Small" }];
+  const dashed = "Before an Agent Acts\n1. Set Approval Rules —\nHuman checkpoint\n2. Start Small";
+  shown.push(dashed, dashed);
+  const added = (await tool("create_infographic").run(spec(points) as never, ctx)) as { error: string };
+  assert.match(added.error, /added a dash \(—\) to its text twice/);
+  assert.deepEqual([drawn, a.state.images.length], [2, 0]);
+  shown.push(dashed, "Before an Agent Acts\n1. Set Approval Rules\nHuman checkpoint\n2. Start Small");
+  assert.equal(((await tool("create_infographic").run(spec(points) as never, ctx)) as { placed?: string }).placed, "img-1");
+
+  // A cover whose headline reads right but gained a dash is redrawn, then flagged.
+  shown.push("AI Agents — Compared", "AI Agents — Compared");
+  await tool("generate_cover").run({ headline: "AI Agents Compared", artDirection: "a node" } as never, ctx);
+  assert.match(a.state.cover!.textIssue ?? "", /The image reads "AI Agents — Compared"/);
 });

@@ -116,9 +116,21 @@ export const AGENT_MAX_TURNS = {
   graphics: number("MAX_TURNS_GRAPHICS", 30),
   reviewer: number("MAX_TURNS_REVIEWER", 20),
 } as const;
-/** Google searches and pages read (shared by the Research, Editor and Reviewer agents). */
-export const AGENT_MAX_SEARCHES = number("MAX_SEARCHES", 15);
-export const AGENT_MAX_READS = number("MAX_READS", 25);
+/**
+ * Google searches and pages read per article, for each agent that researches (by agent name). Research does the bulk;
+ * the Editor and the Reviewer have their own, so a fact can still be checked after Research used up its share. A page
+ * that can't be read doesn't count. An agent not listed has none.
+ */
+export const AGENT_MAX_SEARCHES: Record<string, number> = {
+  research: number("MAX_SEARCHES", 100),
+  editor: number("MAX_SEARCHES_EDITOR", 100),
+  reviewer: number("MAX_SEARCHES_REVIEWER", 100),
+};
+export const AGENT_MAX_READS: Record<string, number> = {
+  research: number("MAX_READS", 100),
+  editor: number("MAX_READS_EDITOR", 100),
+  reviewer: number("MAX_READS_REVIEWER", 100),
+};
 /** YouTube searches and transcripts; DataForSEO charges about $0.006 per transcript. */
 export const AGENT_MAX_VIDEO_SEARCHES = number("MAX_VIDEO_SEARCHES", 5);
 export const AGENT_MAX_TRANSCRIPTS = number("MAX_TRANSCRIPTS", 10);

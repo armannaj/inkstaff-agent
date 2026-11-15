@@ -1,4 +1,4 @@
-import { articleMarkdown, wordCount } from "./content/markdown";
+import { articleMarkdown, sectionLabel, wordCount } from "./content/markdown";
 import { PROCESS_JARGON, unsupportedNumbers } from "./content/verify";
 import { competitorPolicy } from "@/lib/schemas";
 import type { AgentArticle, ReviewIssue } from "./types";
@@ -67,7 +67,7 @@ export function checkArticle(article: Pick<AgentArticle, "input" | "state">): Re
         severity: "critical",
         owner: "writer",
         sectionId: section.id,
-        problem: `The planned section "${section.heading}" isn't written.`,
+        problem: `The planned section "${sectionLabel(section)}" isn't written.`,
         fix: "Write it.",
       });
   const bySection = new Map<string, string[]>();

@@ -185,6 +185,9 @@ export async function listAgentArticles() {
       wordCount: agentArticles.wordCount,
       publishedAt: agentArticles.publishedAt,
       publishedUrl: sql<string | null>`json_extract(${agentArticles.state}, '$.publication.url')`,
+      replacedTitle: sql<string | null>`json_extract(${agentArticles.state}, '$.publication.replaced.title')`,
+      replacedArticleId: sql<string | null>`json_extract(${agentArticles.state}, '$.publication.replaced.articleId')`,
+      replacedById: sql<string | null>`json_extract(${agentArticles.state}, '$.replacedBy.articleId')`,
       updatedAt: agentArticles.updatedAt,
     })
     .from(agentArticles)

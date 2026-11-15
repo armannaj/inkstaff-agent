@@ -286,7 +286,7 @@ export function AgentEditor({
             </details>
           )
         )}
-        {state.outcome && !working && <p className="rounded-xl border p-4 text-sm">{state.outcome}</p>}
+        {state.outcome && !working && <p className="whitespace-pre-line rounded-xl border p-4 text-sm">{state.outcome}</p>}
         {article.error && <p role="alert" className="rounded-xl border border-destructive/40 p-4 text-sm text-destructive">{article.error}</p>}
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         {notice && <p className="text-sm text-emerald-700 dark:text-emerald-400">{notice}</p>}
@@ -330,13 +330,13 @@ export function AgentEditor({
         <div className="space-y-8">
           <CoverPanel article={article} disabled={working || !!busy || dirty} busy={busy === "cover"} onRegenerate={(o) => run("cover", () => regenerateAgentCoverAction(article.id, article.version, o))} />
           {!state.sections.length && <p className="text-sm text-muted-foreground">The sections appear here as the Writer writes them.</p>}
-          {state.sections.map((section) => {
+          {state.sections.map((section, index) => {
             const draft = drafts[section.id];
             return (
               <section key={section.id} className="space-y-3 border-b pb-8">
                 {draft ? (
                   <div className="space-y-2">
-                    <Input value={draft.heading} aria-label="Heading" onChange={(e) => setDrafts({ ...drafts, [section.id]: { ...draft, heading: e.target.value } })} />
+                    <Input value={draft.heading} aria-label="Heading" placeholder={index === 0 ? "No heading: published as the opening, under the title" : "Heading"} onChange={(e) => setDrafts({ ...drafts, [section.id]: { ...draft, heading: e.target.value } })} />
                     <Textarea rows={16} value={draft.markdown} aria-label="Section Markdown" onChange={(e) => setDrafts({ ...drafts, [section.id]: { ...draft, markdown: e.target.value } })} />
                     <Button size="sm" variant="ghost" onClick={() => setDrafts(Object.fromEntries(Object.entries(drafts).filter(([id]) => id !== section.id)))}>
                       Discard changes
@@ -345,7 +345,11 @@ export function AgentEditor({
                 ) : (
                   <>
                     <div className="flex items-start justify-between gap-3">
-                      <h2 className="text-xl font-semibold">{section.heading}</h2>
+                      {section.heading ? (
+                        <h2 className="text-xl font-semibold">{section.heading}</h2>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">Opening (no heading)</p>
+                      )}
                       {!working && (
                         <Button size="sm" variant="outline" disabled={!!busy} onClick={() => setDrafts({ ...drafts, [section.id]: section })}>
                           Edit

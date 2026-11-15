@@ -136,7 +136,7 @@ export async function sendAgentNoteAction(id: string, text: string) {
 
 const EditsSchema = z.object({
   sections: z
-    .array(z.object({ id: z.string(), heading: z.string().trim().min(1).max(300), markdown: z.string().max(60_000) }))
+    .array(z.object({ id: z.string(), heading: z.string().trim().max(300), markdown: z.string().max(60_000) }))
     .min(1),
   metadata: z.object({
     h1: z.string().trim().min(3).max(200),
@@ -152,6 +152,8 @@ export async function saveAgentEditsAction(id: string, version: number, input: u
       const { sections, metadata } = EditsSchema.parse(input);
       const { state } = article;
       if (new Set(sections.map((s) => s.id)).size !== sections.length) throw new Error("Section IDs must be unique.");
+      // Only the opening is published without a heading.
+      if (sections.some((s, i) => i > 0 && !s.heading)) throw new Error("Only the first section can be without a heading.");
       const edited = sections.map((s) => ({ ...s, listItems: state.sections.find((o) => o.id === s.id)?.listItems ?? [] }));
       state.sections = cleanLinks(edited, state, article.input).sections;
       state.images = state.images.filter((i) => state.sections.some((s) => s.id === i.sectionId));
@@ -260,12 +262,17 @@ export async function publishAgentAction(id: string, version: number, replaceSlu
           throw new Error(`The agents are working on "${old.title}", the article that published that post. Pause it first.`);
         replaced.push(lease);
       }
-      const publication = await publishAgentArticle(
+      const published = await publishAgentArticle(
         article,
         product.publishing,
         product.storage,
         target ? { slug: target.slug, images: replaced.flatMap((r) => Object.values(r.article.state.publication?.assets ?? {})) } : undefined,
       );
+      // Updates of the post keep what it replaced on its first publish.
+      const replacedPost = target
+        ? { title: target.title, ...(target.articleIds[0] ? { articleId: target.articleIds[0] } : {}) }
+        : article.state.publication?.replaced;
+      const publication = replacedPost ? { ...published, replaced: replacedPost } : published;
       const next = await commitAgentArticle(article, token, {
         state: {
           ...article.state,

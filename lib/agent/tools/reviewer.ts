@@ -4,6 +4,7 @@ import { ReviewReportSchema } from "../schemas";
 import { researchTools } from "./research";
 import { inspectImage, listImages, reviewImage } from "./graphics";
 import { defineTool, type AgentTool } from "./types";
+import type { WorkerAgent } from "../types";
 
 const checkTool = defineTool({
   name: "check_article",
@@ -44,4 +45,12 @@ const submitReview = defineTool({
   },
 });
 
-export const reviewerTools = (): AgentTool[] => [...researchTools(), checkTool, listImages, reviewImage, inspectImage, submitReview];
+/** The Reviewer's tools, for the agent that gets them (the Editor has them too): research counts against its own allowance. */
+export const reviewerTools = (agent: WorkerAgent = "reviewer"): AgentTool[] => [
+  ...researchTools(agent),
+  checkTool,
+  listImages,
+  reviewImage,
+  inspectImage,
+  submitReview,
+];
