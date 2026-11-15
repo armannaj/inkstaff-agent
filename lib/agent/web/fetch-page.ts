@@ -120,11 +120,19 @@ export function extractPage(html: string, url: string) {
   const lastModified =
     $('meta[property="article:modified_time"]').attr("content") ?? null;
   $("script,style,nav,footer,header,aside,noscript,form").remove();
-  const main = $("main,article").first();
-  const root = main.length ? main : $("body");
-  root.find("p,div,li,h1,h2,h3,h4,pre,tr,br").append(" ");
+  const body = $("body");
+  body.find("p,div,li,h1,h2,h3,h4,pre,tr,br").append(" ");
+  const text = (el: typeof body) => el.text().replace(/\s+/g, " ").trim();
   // The whole readable text: the 2 MB download limit bounds it.
-  const content = root.text().replace(/\s+/g, " ").trim();
+  const pageText = text(body);
+  // The first <main> or <article> when it holds the page's text (leaves out comments and related posts). Some pages
+  // wrap only the hero or the first card in it, with the rest after it: taranify.com's <main> is a 119-character quiz
+  // intro on a page of 5,000+. Those read the whole page.
+  const main = $("main,article").first();
+  const mainText = main.length ? text(main) : "";
+  const useMain = main.length > 0 && mainText.length * 4 >= pageText.length;
+  const root = useMain ? main : body;
+  const content = useMain ? mainText : pageText;
   return {
     url,
     title,

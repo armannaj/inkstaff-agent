@@ -7,6 +7,7 @@ import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import remarkRehype from "remark-rehype";
 import { publishMarkdown, type PlacedAssets } from "../content/markdown";
+import { MEDIA_WIDTH } from "../content/export";
 import rehypeStringify from "rehype-stringify";
 import type { PublishingSettings, StorageSettings } from "@/lib/schemas";
 import { getAsset, indexedBlogPages, publishedArticles } from "../store";
@@ -36,6 +37,10 @@ export function slugify(value: string, max = 60) {
     .slice(0, max)
     .replace(/-+$/, "");
 }
+/** An image as it goes out (to the blog, or in an export): WebP, at most `width` wide. */
+export function blogWebp(base64: string, width: number) {
+  return sharp(Buffer.from(base64, "base64")).resize({ width, withoutEnlargement: true }).webp({ quality: 80 }).toBuffer();
+}
 
 /**
  * The product's S3-compatible storage the images are uploaded to (Cloudflare R2, AWS S3, MinIO, ...), addressed
@@ -51,8 +56,8 @@ const objectUrl = (storage: StorageSettings, key: string) => `${storage.endpoint
 async function uploadImages(article: AgentArticle, storage: StorageSettings | null, slug: string) {
   const { state } = article;
   const wanted = [
-    ...(state.cover?.assetId ? [{ assetId: state.cover.assetId, name: "cover", width: 1600 }] : []),
-    ...state.images.flatMap((i) => (i.assetId ? [{ assetId: i.assetId, name: i.altText, width: 1200 }] : [])),
+    ...(state.cover?.assetId ? [{ assetId: state.cover.assetId, name: "cover", width: MEDIA_WIDTH.cover }] : []),
+    ...state.images.flatMap((i) => (i.assetId ? [{ assetId: i.assetId, name: i.altText, width: MEDIA_WIDTH.image }] : [])),
   ];
   const previous = state.publication?.assets ?? {};
   const assets: PublishedAssets = {};
@@ -61,7 +66,7 @@ async function uploadImages(article: AgentArticle, storage: StorageSettings | nu
     const asset = await getAsset(assetId);
     if (!asset) continue;
     if (!storage) throw new Error("Set up image storage for this product first (Products → Image storage).");
-    const body = await sharp(Buffer.from(asset.base64, "base64")).resize({ width, withoutEnlargement: true }).webp({ quality: 80 }).toBuffer();
+    const body = await blogWebp(asset.base64, width);
     const key = `${slug}/${slugify(name) || "image"}-${createHash("sha256").update(body).digest("hex").slice(0, 8)}.webp`;
     const url = `${storage.publicUrl}/${key}`;
     if (previous[assetId] !== url) {

@@ -4,8 +4,20 @@ import Image from "next/image";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { LoaderCircleIcon, PauseIcon, PlayIcon, SendIcon, SquareIcon, Trash2Icon, UploadIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  DownloadIcon,
+  FileTextIcon,
+  LoaderCircleIcon,
+  PauseIcon,
+  PlayIcon,
+  SendIcon,
+  SquareIcon,
+  Trash2Icon,
+  UploadIcon,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -26,6 +38,7 @@ import { STATUS_LABELS, formatUsd } from "./labels";
 import { AgentLog } from "./agent-log";
 import { AgentTeam } from "./agent-team";
 import { PublishDialog } from "./publish-dialog";
+import { ExportMarkdownDialog } from "./export-dialog";
 
 const TABS = ["Article", "SEO", "Plan", "Research", "Reviews", "Cost"] as const;
 type Tab = (typeof TABS)[number];
@@ -79,6 +92,7 @@ export function AgentEditor({
   const [seo, setSeo] = useState(initialArticle.state.metadata);
   const [note, setNote] = useState("");
   const [publishing, setPublishing] = useState(false);
+  const [exporting, setExporting] = useState<"markdown" | null>(null);
   const { state } = article;
   const working = active(article);
   const dirty = Object.keys(drafts).length > 0 || JSON.stringify(seo) !== JSON.stringify(state.metadata);
@@ -230,6 +244,23 @@ export function AgentEditor({
                     {busy === "save" && <LoaderCircleIcon className="animate-spin" />} Save changes
                   </Button>
                 )}
+                {/* Not modal: a modal menu that opens a dialog can leave the page unclickable once the dialog closes. */}
+                <DropdownMenu modal={false}>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="outline"
+                      disabled={!!busy || dirty || !state.sections.length}
+                      title={dirty ? "Save your changes first: the export is the article as saved." : undefined}
+                    >
+                      <DownloadIcon /> Export as <ChevronDownIcon />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onSelect={() => setExporting("markdown")}>
+                      <FileTextIcon /> Markdown
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 <Button
                   variant={dirty ? "outline" : "default"}
                   disabled={!!busy || dirty || !publishTo || !state.metadata}
@@ -257,6 +288,7 @@ export function AgentEditor({
             onPublish={publish}
           />
         )}
+        {exporting === "markdown" && !working && <ExportMarkdownDialog article={article} onClose={() => setExporting(null)} />}
         {working ? (
           <div className="space-y-3">
             <AgentTeam team={team} status={article.status} run={state.run} cost={state.cost} timeline={state.timeline} budgetUsd={budgetUsd} />

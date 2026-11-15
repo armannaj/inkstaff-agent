@@ -13,6 +13,8 @@ import { readableChars } from "./tools/research";
 import { assignSectionIds } from "./tools/submit";
 import { callSummary, conversationForModel, runTurn } from "./harness";
 import { htmlToMarkdown } from "./web/markdown";
+import { extractPage } from "./web/fetch-page";
+import { exportFrontmatter, exportMarkdown, exportedMedia } from "./content/export";
 import { AGENT_MAX_READS, AGENT_MAX_SEARCHES, AGENT_MODELS } from "@/lib/config";
 import { calculatedNumbers, unsupportedNumbers } from "./content/verify";
 import { reviewerTools } from "./tools/reviewer";
@@ -97,6 +99,71 @@ function memoryStores() {
 /** A review's reader check, as the Reviewer fills it in before listing issues. */
 const readerCheck = { opening: "\"Buffer costs more.\" A reader would keep reading.", recommendation: "none", hedged: [], sameness: "none", goal: "nowhere" };
 const call = (name: string, args: unknown) => ({ id: `${name}-${Math.random().toString(36).slice(2, 8)}`, name, arguments: JSON.stringify(args) });
+
+test("page text comes from <main> when it holds the page, else from the whole page (a <main> around just the hero)", () => {
+  const filler = "Pick the colors you like and get films, shows and music that match your mood. ".repeat(20);
+  const hero = extractPage(
+    `<body><header>Menu</header><main><h1>Find your mood</h1><p>Start here</p></main><section><h2>How it works</h2><p>${filler}</p></section></body>`,
+    "https://example.com/",
+  );
+  assert.ok(hero.content.startsWith("Find your mood Start here How it works"));
+  assert.ok(hero.content.length > 1000);
+  assert.deepEqual(hero.headings, ["How it works"]);
+  assert.ok(!hero.content.includes("Menu"));
+
+  const post = extractPage(
+    `<body><article><h2>Intro</h2><p>${filler}</p></article><section><h2>Comments</h2><p>Nice post.</p></section></body>`,
+    "https://example.com/blog/post",
+  );
+  assert.deepEqual(post.headings, ["Intro"]);
+  assert.ok(!post.content.includes("Nice post"));
+});
+
+test("Markdown export: each image a file named after its alt text, once, and linked by that name; the frontmatter quoted", () => {
+  const image = (id: string, sectionId: string, altText: string, assetId?: string) =>
+    ({ id, sectionId, kind: "illustration", altText, subject: "", assetId }) as const;
+  const state = {
+    cover: { headline: "", artDirection: "", style: "", altText: "Headphones", assetId: "a0" },
+    sections: [
+      { id: "s1", heading: "", markdown: "Intro paragraph.", listItems: [] },
+      { id: "s2", heading: "Why", markdown: "First.\n\nSecond.", listItems: [] },
+    ],
+    // Listed out of order; one never drawn, one in no section: neither is in the article.
+    images: [
+      image("i2", "s2", "Focus vs. tempo", "a2"),
+      image("i1", "s1", "Focus vs. tempo", "a1"),
+      image("i3", "s2", "Not drawn"),
+      image("i4", "gone", "Orphan", "a4"),
+      // File names stay ASCII (they go in a download header): accents dropped, other scripts left out.
+      image("i5", "s2", "Résumé tips", "a5"),
+      image("i6", "s2", "音乐", "a6"),
+    ],
+    videos: [],
+    faq: [],
+  };
+  assert.deepEqual(
+    exportedMedia(state).map((m) => [m.assetId, m.file, m.width]),
+    [
+      ["a0", "cover.webp", 1600],
+      ["a1", "focus-vs-tempo.webp", 1200],
+      ["a2", "focus-vs-tempo-2.webp", 1200],
+      ["a5", "resume-tips.webp", 1200],
+      ["a6", "image.webp", 1200],
+    ],
+  );
+  const markdown = exportMarkdown(state);
+  assert.equal(
+    markdown,
+    "Intro paragraph.\n\n![Focus vs. tempo](./focus-vs-tempo.webp)\n\n## Why\n\nFirst.\n\n![Focus vs. tempo](./focus-vs-tempo-2.webp)\n\n![Résumé tips](./resume-tips.webp)\n\n![音乐](./image.webp)\n\nSecond.",
+  );
+
+  const metadata = { h1: 'Does "music" help? Yes: #1', slug: "music", metaDescription: "", excerpt: "Short: yes.", primaryKeyword: "", secondaryKeywords: [] };
+  const draft: Parameters<typeof exportFrontmatter>[0] = { title: "Fallback", state: { metadata } };
+  assert.equal(exportFrontmatter(draft, new Date(2026, 10, 15)), '---\ntitle: "Does \\"music\\" help? Yes: #1"\ndate: 2026-11-15\nexcerpt: "Short: yes."\n---\n');
+  const publication = { slug: "music", url: null, publishedAt: new Date(2026, 9, 3, 12).toISOString(), updatedAt: "", assets: {}, response: "" };
+  const published = { ...draft, state: { ...draft.state, publication } };
+  assert.ok(exportFrontmatter(published, new Date(2026, 10, 15)).includes("date: 2026-10-03"));
+});
 
 test("section IDs survive a re-plan when the heading or item is unchanged", () => {
   const first = assignSectionIds([planSection("", "Intro"), planSection("", "Alpha: best for teams", "Alpha")]);
